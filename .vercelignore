@@ -1,0 +1,7 @@
+# Never upload local env files to Vercel (CLI deploys)
+.env
+.env.local
+.env*.local
+
+# Standard Vercel exclusions are applied automatically (git, node_modules, .next)
+.vercel
