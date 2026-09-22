@@ -61,6 +61,9 @@
   .badge-indigo {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-indigo-100 text-indigo-800;
   }
+  .badge-purple {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-purple-100 text-purple-800;
+  }
   .badge-red {
     @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold bg-red-100 text-red-700;
   }

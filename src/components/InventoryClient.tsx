@@ -4,28 +4,47 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { ItemForm } from "@/components/ItemForm";
 import { centsToUsd, downloadTextFile, kindLabel, pluralize, truncated, toCsv } from "@/lib/utils";
-import type { Item, ItemKind } from "@/lib/types";
+import type { Item, ItemKind, Location } from "@/lib/types";
 
 const KINDS: Array<ItemKind | "all"> = ["all", "sealed", "bulk_cards", "other"];
+
+type LocFilter = "all" | "unassigned" | string;
 
 export function InventoryClient({ initial }: { initial: Item[] }) {
   const [items, setItems] = useState<Item[]>(initial);
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<ItemKind | "all">("all");
+  const [locFilter, setLocFilter] = useState<LocFilter>("all");
   const [showInactive, setShowInactive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [manageLocations, setManageLocations] = useState(false);
 
   const [editing, setEditing] = useState<Item | null | "new">(null);
   const [adjusting, setAdjusting] = useState<Item | null>(null);
   const [adjustDelta, setAdjustDelta] = useState(1);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  useEffect(() => {
+    fetch("/api/locations")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data) setLocations(data.locations ?? []);
+      })
+      .catch(() => {});
+  }, []);
+
   const load = useCallback(async () => {
     setBusy(true);
     const params = new URLSearchParams();
     if (kind !== "all") params.set("kind", kind);
     if (showInactive) params.set("includeInactive", "true");
+    if (locFilter === "unassigned") {
+      params.set("unassigned", "true");
+    } else if (locFilter !== "all") {
+      params.set("location_id", locFilter);
+    }
     if (q.trim()) params.set("q", q.trim());
     try {
       const res = await fetch(`/api/inventory?${params.toString()}`);
@@ -33,7 +52,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
     } finally {
       setBusy(false);
     }
-  }, [kind, q, showInactive]);
+  }, [kind, q, locFilter, showInactive]);
 
   useEffect(() => {
     const t = setTimeout(load, 300);
@@ -143,6 +162,74 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
     load();
   }
 
+  async function assignLocation(item: Item, locationId: string) {
+    const res = await fetch(`/api/inventory/${item.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location_id: locationId || null }),
+    });
+    if (res.ok) {
+      setItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, location_id: locationId || null } : it)),
+      );
+    } else {
+      flash("Could not update location");
+    }
+  }
+
+  async function addLocation() {
+    const name = window.prompt("New storage location name", "");
+    if (name == null) return;
+    const res = await fetch("/api/locations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      flash(data?.error ?? "Could not add location");
+      return;
+    }
+    setLocations((prev) => [...prev, data].sort((a, b) => a.name.localeCompare(b.name)));
+    setLocFilter(data.id);
+    flash(`Added "${data.name}"`);
+  }
+
+  async function renameLocation(loc: Location) {
+    const name = window.prompt("Rename storage location", loc.name);
+    if (name == null) return;
+    const res = await fetch(`/api/locations/${loc.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      flash(data?.error ?? "Could not rename location");
+      return;
+    }
+    setLocations((prev) =>
+      prev.map((l) => (l.id === loc.id ? { ...l, name: data.name } : l)),
+    );
+    flash(`Renamed to "${data.name}"`);
+  }
+
+  async function deleteLocation(loc: Location) {
+    if (!window.confirm(`Delete "${loc.name}"? Items there become Unassigned.`)) return;
+    const res = await fetch(`/api/locations/${loc.id}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok) {
+      flash(data?.error ?? "Could not delete location");
+      return;
+    }
+    setLocations((prev) => prev.filter((l) => l.id !== loc.id));
+    if (locFilter === loc.id) setLocFilter("all");
+    load();
+    flash(`Deleted "${loc.name}"`);
+  }
+
+  const locName = (id: string | null) => locations.find((l) => l.id === id)?.name;
+
   return (
     <div>
       {/* Header actions */}
@@ -166,6 +253,22 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
             </button>
           ))}
         </div>
+        <select
+          className="input max-w-48"
+          value={locFilter}
+          onChange={(e) => setLocFilter(e.target.value as LocFilter)}
+        >
+          <option value="all">All locations</option>
+          <option value="unassigned">Unassigned</option>
+          {locations.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn-ghost" onClick={() => setManageLocations((v) => !v)}>
+          Locations
+        </button>
         <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
           <input
             type="checkbox"
@@ -194,13 +297,14 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
             downloadTextFile(
               "goodwhill-inventory.csv",
               toCsv([
-                ["name", "kind", "upc", "set_code", "category", "quantity", "unit_cost", "value"],
+                ["name", "kind", "upc", "set_code", "category", "location", "quantity", "unit_cost", "value"],
                 ...filtered.map((i) => [
                   i.name,
                   i.kind,
                   i.upc ?? "",
                   i.set_code ?? "",
                   i.category ?? "",
+                  locName(i.location_id) ?? "",
                   String(i.quantity),
                   i.unit_cost_cents ? (i.unit_cost_cents / 100).toFixed(2) : "",
                   i.value_cents ? (i.value_cents / 100).toFixed(2) : "",
@@ -219,6 +323,43 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         inventory value {centsToUsd(summary.value)} (filtered by current view)
       </p>
 
+      {manageLocations && (
+        <div className="card mb-3">
+          <div className="mb-2 flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">
+              Storage locations
+            </h2>
+            <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => setManageLocations(false)}>
+              Close
+            </button>
+          </div>
+          <ul className="divide-y divide-slate-100">
+            {locations.length === 0 && (
+              <li className="py-2 text-sm text-slate-500">No locations yet — add your first box.</li>
+            )}
+            {locations.map((loc) => (
+              <li key={loc.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span className="text-sm font-medium">{loc.name}</span>
+                <span className="flex gap-1">
+                  <button className="btn btn-ghost px-2 py-1 text-xs" onClick={() => renameLocation(loc)}>
+                    Rename
+                  </button>
+                  <button
+                    className="btn btn-ghost px-2 py-1 text-xs text-red-600"
+                    onClick={() => deleteLocation(loc)}
+                  >
+                    Delete
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+          <button className="btn btn-secondary mt-2 w-full" onClick={addLocation}>
+            + Add location
+          </button>
+        </div>
+      )}
+
       {busy && !editing && !adjusting && (
         <p className="mb-2 text-xs text-slate-400">Refreshing…</p>
       )}
@@ -236,6 +377,8 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
               <li key={item.id}>
                 <ItemRow
                   item={item}
+                  locations={locations}
+                  onAssignLocation={(id) => assignLocation(item, id)}
                   onEdit={() => setEditing(item)}
                   onAdjust={() => {
                     setAdjusting(item);
@@ -261,6 +404,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         {editing !== null && (
           <ItemForm
             initial={editing === "new" ? null : editing}
+            locations={locations}
             onSaved={() => {
               setEditing(null);
               load();
@@ -306,6 +450,8 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
 
 function ItemRow({
   item,
+  locations,
+  onAssignLocation,
   onEdit,
   onAdjust,
   onToggleActive,
@@ -313,6 +459,8 @@ function ItemRow({
   onRefreshPrice,
 }: {
   item: Item;
+  locations: Location[];
+  onAssignLocation: (locationId: string) => void;
   onEdit: () => void;
   onAdjust: () => void;
   onToggleActive: () => void;
@@ -342,6 +490,11 @@ function ItemRow({
           {item.upc && <span className="badge badge-indigo">{item.upc}</span>}
           {item.set_code && <span className="badge badge-amber">{item.set_code}</span>}
           {item.price_source && <span className="badge badge-green">{item.price_source.replace("_", " ")}</span>}
+          {item.location_id && (
+            <span className="badge badge-purple">
+              {locations.find((l) => l.id === item.location_id)?.name ?? "?"}
+            </span>
+          )}
         </div>
         {item.notes && <p className="mt-0.5 truncate text-xs text-slate-400">{item.notes}</p>}
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -372,27 +525,38 @@ function ItemRow({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-1">
-        <IconBtn title="Add stock" onClick={onAdjust} label="+" />
-        <IconBtn
-          title="Remove stock"
-          onClick={onAdjust}
-          label="−"
-        />
-        <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onEdit}>
-          Edit
-        </button>
-        <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onToggleActive}>
-          {item.active ? "Pause" : "Resume"}
-        </button>
-        <button
-          className="btn btn-ghost px-2 py-1 text-xs text-red-600"
-          onClick={onDelete}
-          disabled={item.quantity > 0}
-          title={item.quantity > 0 ? "Remove stock first to delete" : "Delete"}
+      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
+        <select
+          className="input max-w-36 px-2 py-1 text-xs"
+          value={item.location_id ?? ""}
+          onChange={(e) => onAssignLocation(e.target.value)}
+          title="Storage location"
         >
-          Del
-        </button>
+          <option value="">Unassigned</option>
+          {locations.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+        <div className="flex items-center gap-1">
+          <IconBtn title="Add stock" onClick={onAdjust} label="+" />
+          <IconBtn title="Remove stock" onClick={onAdjust} label="−" />
+          <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onEdit}>
+            Edit
+          </button>
+          <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onToggleActive}>
+            {item.active ? "Pause" : "Resume"}
+          </button>
+          <button
+            className="btn btn-ghost px-2 py-1 text-xs text-red-600"
+            onClick={onDelete}
+            disabled={item.quantity > 0}
+            title={item.quantity > 0 ? "Remove stock first to delete" : "Delete"}
+          >
+            Del
+          </button>
+        </div>
       </div>
     </div>
   );

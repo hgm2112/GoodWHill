@@ -5,9 +5,10 @@ import { parseCsv } from "@/lib/utils";
 /**
  * POST /api/inventory/import — bulk import from CSV.
  * Expected header row (order-independent): name, kind, upc, set_code,
- * category, quantity, unit_cost (USD), value (USD)
+ * category, location, quantity, unit_cost (USD), value (USD), notes
  * Existing rows are matched by UPC (when present) or name+kind, and the
- * imported quantity is ADDED to them. New rows are created.
+ * imported quantity is ADDED to them. New rows are created. The `location`
+ * column is optional; the box is matched/created by name.
  */
 export async function POST(request: Request) {
   const auth = await authUser();
@@ -35,6 +36,36 @@ export async function POST(request: Request) {
   let updated = 0;
   let skipped = 0;
 
+  // Resolve `location` values to location ids (match existing by name,
+  // create when new). Done lazily per row.
+  const locationCache = new Map<string, string | null>();
+  async function resolveLocation(name: string): Promise<string | null> {
+    const key = name.trim();
+    if (!key) return null;
+    if (locationCache.has(key)) return locationCache.get(key) ?? null;
+    const { data: existing } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("owner_id", user.id)
+      .eq("name", key)
+      .maybeSingle();
+    if (existing) {
+      locationCache.set(key, existing.id);
+      return existing.id;
+    }
+    const { data: newLoc, error } = await supabase
+      .from("locations")
+      .insert({ owner_id: user.id, name: key })
+      .select("id")
+      .single();
+    if (!error && newLoc) {
+      locationCache.set(key, newLoc.id);
+      return newLoc.id;
+    }
+    locationCache.set(key, null);
+    return null;
+  }
+
   for (const row of rows.slice(1)) {
     const name = get(row, "name");
     if (!name) {
@@ -48,6 +79,7 @@ export async function POST(request: Request) {
     const quantity = Number.isFinite(quantityRaw) ? Math.max(0, quantityRaw) : 0;
     const unitCost = getCents(get(row, "unit_cost"));
     const value = getCents(get(row, "value"));
+    const locationId = await resolveLocation(get(row, "location"));
 
     const payload: Record<string, unknown> = {
       name,
@@ -57,6 +89,7 @@ export async function POST(request: Request) {
       category: get(row, "category") || null,
       unit_cost_cents: unitCost,
       value_cents: value,
+      location_id: locationId,
       notes: get(row, "notes") || null,
     };
 

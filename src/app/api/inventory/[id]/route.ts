@@ -52,6 +52,19 @@ export async function PATCH(request: Request, { params }: Params) {
     next.image_url = body.image_url ? String(body.image_url).trim() || null : null;
   if ("notes" in body) next.notes = body.notes ? String(body.notes).trim() || null : null;
   if ("active" in body) next.active = body.active !== false;
+  if ("location_id" in body) {
+    const value = body.location_id ? String(body.location_id) : null;
+    if (value) {
+      const { data: loc } = await supabase
+        .from("locations")
+        .select("id")
+        .eq("id", value)
+        .eq("owner_id", user.id)
+        .maybeSingle();
+      if (!loc) return apiError("Unknown location", 400);
+    }
+    next.location_id = value;
+  }
 
   const { data, error } = await supabase
     .from("items")

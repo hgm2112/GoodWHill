@@ -4,16 +4,17 @@ import { useState } from "react";
 import { CardSearchInput, type CardResult } from "@/components/CardSearchInput";
 import { NumberDollars } from "@/components/ui/Modal";
 import { KIND_OPTIONS, kindLabel } from "@/lib/utils";
-import type { Item, ItemKind } from "@/lib/types";
+import type { Item, ItemKind, Location } from "@/lib/types";
 
 interface Props {
   initial?: Item | null;
   defaultKind?: ItemKind;
+  locations?: Location[];
   onSaved: (item: Item) => void;
   onClose: () => void;
 }
 
-export function ItemForm({ initial, defaultKind = "sealed", onSaved, onClose }: Props) {
+export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSaved, onClose }: Props) {
   const isEdit = Boolean(initial);
   const [kind, setKind] = useState<ItemKind>(initial?.kind ?? defaultKind);
   const [name, setName] = useState(initial?.name ?? "");
@@ -25,6 +26,7 @@ export function ItemForm({ initial, defaultKind = "sealed", onSaved, onClose }: 
   const [value, setValue] = useState<number | null>(initial?.value_cents ?? null);
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [locationId, setLocationId] = useState<string>(initial?.location_id ?? "");
   const [pickingCard, setPickingCard] = useState(!isEdit && defaultKind === "bulk_cards");
 
   const [busy, setBusy] = useState(false);
@@ -141,6 +143,7 @@ export function ItemForm({ initial, defaultKind = "sealed", onSaved, onClose }: 
       value_cents: value,
       image_url: imageUrl.trim() || null,
       notes: notes.trim() || null,
+      location_id: locationId || null,
     };
     try {
       const res = isEdit
@@ -281,6 +284,25 @@ export function ItemForm({ initial, defaultKind = "sealed", onSaved, onClose }: 
         Value is what the item is worth (market resale) — used for{" "}
         {kind === "sealed" ? "eBay autofill and " : ""}bundle building. Cost is what you paid.
       </p>
+
+      <div>
+        <label className="label">Storage</label>
+        <select
+          className="input"
+          value={locationId}
+          onChange={(e) => setLocationId(e.target.value)}
+        >
+          <option value="">Unassigned</option>
+          {locations.map((loc) => (
+            <option key={loc.id} value={loc.id}>
+              {loc.name}
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-slate-400">
+          Pick the box/shelf where this is stored. Manage these under Inventory.
+        </p>
+      </div>
 
       {kind === "bulk_cards" && (
         <button

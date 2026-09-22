@@ -7,10 +7,11 @@ import { authUser, apiError, getIntParam } from "@/lib/api-helper";
  *   carry this UPC (or match the catalog product).
  *
  * POST /api/scan — quick "I have this item" flow.
- *   Body: { upc, delta, name?, set_code?, image_url? }
+ *   Body: { upc, delta, name?, set_code?, image_url?, location_id? }
  *   1. Upserts the UPC into the shared catalog with a best-effort product
  *      name (from the request, or auto-resolved by GTIN when eBay configured).
- *   2. Creates a sealed item if the user has none for that UPC.
+ *   2. Creates a sealed item if the user has none for that UPC (stamped with
+ *      `location_id` when provided). Existing items are left where they are.
  *   3. Adjusts stock by `delta` and logs a movement.
  *   Returns { item, catalog }.
  */
@@ -109,6 +110,17 @@ export async function POST(request: Request) {
     item = existingItem;
   } else {
     const setCode = body?.set_code ? String(body.set_code).toUpperCase().slice(0, 12) : null;
+    const rawLoc = body?.location_id ? String(body.location_id) : null;
+    let locationId: string | null = null;
+    if (rawLoc) {
+      const { data: loc } = await supabase
+        .from("locations")
+        .select("id")
+        .eq("id", rawLoc)
+        .eq("owner_id", user.id)
+        .maybeSingle();
+      locationId = loc?.id ?? null;
+    }
     const { data: created, error } = await supabase
       .from("items")
       .insert({
@@ -118,6 +130,7 @@ export async function POST(request: Request) {
         upc,
         set_code: setCode,
         image_url: imageUrl,
+        location_id: locationId,
         quantity: 0,
         category: "MTG Sealed",
       })

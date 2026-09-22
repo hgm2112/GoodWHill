@@ -7,6 +7,7 @@ export interface Profile {
   email: string | null;
   display_name: string | null;
   ebay_username: string | null;
+  default_location_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -28,7 +29,16 @@ export interface Item {
   price_checked_at: string | null;
   image_url: string | null;
   notes: string | null;
+  location_id: string | null;
   active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Location {
+  id: string;
+  owner_id: string;
+  name: string;
   created_at: string;
   updated_at: string;
 }

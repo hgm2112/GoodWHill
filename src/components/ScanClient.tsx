@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
 import { centsToUsd, formatDateTime, pluralize } from "@/lib/utils";
-import type { Item, ScanResult } from "@/lib/types";
+import type { Item, Location, ScanResult } from "@/lib/types";
 
 export function ScanClient() {
   const [upc, setUpc] = useState("");
@@ -13,6 +13,28 @@ export function ScanClient() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [history, setHistory] = useState<Array<{ upc: string; at: string; added?: number }>>([]);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [locId, setLocId] = useState("");
+
+  useEffect(() => {
+    fetch("/api/locations")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return;
+        setLocations(data.locations ?? []);
+        setLocId(data.default_location_id ?? "");
+      })
+      .catch(() => {});
+  }, []);
+
+  async function setScanLocation(id: string) {
+    setLocId(id);
+    await fetch("/api/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ default_location_id: id || null }),
+    });
+  }
 
   useEffect(() => {
     const code = upc.replace(/\D/g, "");
@@ -50,7 +72,7 @@ export function ScanClient() {
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ upc: code.replace(/\D/g, ""), delta: quantity }),
+        body: JSON.stringify({ upc: code.replace(/\D/g, ""), delta: quantity, location_id: locId || null }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -74,6 +96,28 @@ export function ScanClient() {
 
   return (
     <div className="space-y-4">
+      <div className="card flex flex-wrap items-center gap-3">
+        <div className="min-w-0 flex-1">
+          <label className="label">Storing scans in</label>
+          <select
+            className="input"
+            value={locId}
+            onChange={(e) => setScanLocation(e.target.value)}
+          >
+            <option value="">Unassigned</option>
+            {locations.map((loc) => (
+              <option key={loc.id} value={loc.id}>
+                {loc.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-slate-400">
+            New products get stamped with this box and it&apos;s remembered for next time. Existing
+            items keep their current box. Manage boxes under Inventory.
+          </p>
+        </div>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <div>
           <BarcodeScanner onDetected={onDetected} onError={setError} disabled={busy} />
@@ -149,6 +193,7 @@ export function ScanClient() {
                         <span className="text-sm">
                           {item.name}
                           {item.set_code ? ` (${item.set_code})` : ""}
+                          {item.location_id ? ` · ${locations.find((l) => l.id === item.location_id)?.name ?? "?"}` : ""}
                         </span>
                         <span className={`text-sm ${item.quantity === 0 ? "text-red-600" : "text-slate-700"}`}>
                           {pluralize(item.quantity, "unit")}

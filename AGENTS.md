@@ -70,7 +70,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     `value_cents`, cached eBay price columns), `item_movements` (ledger, one
     row per quantity change with a `reason`), `bundles`/`bundle_items`,
     `allocations` (reserved stock), `listing_drafts`, `sales`, `listings`
-    (synced eBay listings), `ebay_tokens` (service-role ONLY — no RLS policy
+    (synced eBay listings), `locations` (named storage boxes; `items` and
+    `profiles` reference one via `location_id`/`default_location_id`, FK
+    `ON DELETE SET NULL`), `ebay_tokens` (service-role ONLY — no RLS policy
     for app roles).
 
 ### API conventions

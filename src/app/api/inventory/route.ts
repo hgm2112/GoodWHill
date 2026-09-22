@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
 
-/** GET /api/inventory?kind=&q=&includeInactive= */
+/** GET /api/inventory?kind=&q=&location_id=&unassigned=&includeInactive= */
 export async function GET(request: Request) {
   const auth = await authUser();
   if (!auth) return apiError("Unauthorized", 401);
@@ -10,6 +10,8 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const kind = searchParams.get("kind");
   const q = searchParams.get("q")?.trim();
+  const locationId = searchParams.get("location_id");
+  const unassigned = searchParams.get("unassigned") === "true";
   const includeInactive = searchParams.get("includeInactive") === "true";
 
   let query = supabase
@@ -20,6 +22,11 @@ export async function GET(request: Request) {
 
   if (kind && kind !== "all") query = query.eq("kind", kind);
   if (!includeInactive) query = query.eq("active", true);
+  if (unassigned) {
+    query = query.is("location_id", null);
+  } else if (locationId && locationId !== "all") {
+    query = query.eq("location_id", locationId);
+  }
   if (q) {
     query = query.or(`name.ilike.%${q}%,upc.ilike.%${q}%,set_code.ilike.%${q}%`);
   }
@@ -72,7 +79,22 @@ export async function POST(request: Request) {
     image_url: body.image_url ? String(body.image_url).trim() || null : null,
     notes: body.notes ? String(body.notes).trim() || null : null,
     active: body.active !== false,
+    location_id: null,
   };
+
+  // Validate location belongs to the user.
+  if (body.location_id) {
+    const { data: loc } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("id", String(body.location_id))
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    if (!loc) return apiError("Unknown location", 400);
+    payload.location_id = loc.id;
+  } else {
+    payload.location_id = null;
+  }
 
   const { data, error } = await supabase.from("items").insert(payload).select().single();
   if (error) return apiError(error.message, 500, { code: "DB" });
