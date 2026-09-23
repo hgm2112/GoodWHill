@@ -125,43 +125,37 @@ function getEncryptionKey(): Buffer | null {
   return key.length === 32 ? key : null;
 }
 
-export function encryptSecret(plain: string): { iv: string; data: string } {
+const ENC_PREFIX = "enc:";
+
+export function encryptSecret(plain: string): string {
   const key = getEncryptionKey();
   if (!key) {
     // Dev convenience: no key configured → store plaintext (document this).
     console.warn("[ebay] EBAY_TOKEN_ENCRYPTION_KEY not set; storing token unencrypted.");
-    return { iv: "", data: plain };
+    return plain;
   }
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", key, iv);
   const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return {
-    iv: Buffer.concat([iv, tag]).toString("base64"),
-    data: enc.toString("base64"),
-  };
+  return `${ENC_PREFIX}${Buffer.concat([iv, tag, enc]).toString("base64")}`;
 }
 
-export function decryptSecret(secret: { iv: string; data: string }): string {
-  if (!secret.iv) return secret.data;
+export function decryptSecret(stored: string): string {
+  if (!stored.startsWith(ENC_PREFIX)) return stored;
   const key = getEncryptionKey();
   if (!key) throw new Error("EBAY_TOKEN_ENCRYPTION_KEY missing; cannot decrypt tokens");
-  const raw = Buffer.from(secret.iv, "base64");
+  const raw = Buffer.from(stored.slice(ENC_PREFIX.length), "base64");
   const iv = raw.subarray(0, 12);
-  const tag = raw.subarray(12);
+  const tag = raw.subarray(12, 28);
+  const data = raw.subarray(28);
   const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(Buffer.from(secret.data, "base64")), decipher.final()]).toString(
-    "utf8",
-  );
+  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
 }
 
 export async function storeUserTokens(ownerId: string, tokens: EbayTokens): Promise<void> {
   const admin = createAdminClient();
-  const encryptedRefresh = encryptSecret(tokens.refresh_token);
-  const encryptedAccess = tokens.access_token
-    ? encryptSecret(tokens.access_token)
-    : { iv: "", data: "" };
   const expiresAt = tokens.expires_in
     ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
     : null;
@@ -169,8 +163,8 @@ export async function storeUserTokens(ownerId: string, tokens: EbayTokens): Prom
   await admin.from("ebay_tokens").upsert(
     {
       owner_id: ownerId,
-      access_token: encryptedAccess.data,
-      refresh_token: encryptedRefresh.data,
+      access_token: tokens.access_token ? encryptSecret(tokens.access_token) : "",
+      refresh_token: encryptSecret(tokens.refresh_token),
       expires_at: expiresAt,
       scope: EBAY_SCOPES,
       connected_at: new Date().toISOString(),
@@ -190,8 +184,8 @@ export async function getStoredTokens(ownerId: string): Promise<EbayTokens | nul
   if (error) throw error;
   if (!data) return null;
   return {
-    access_token: data.access_token ? decryptSecret({ iv: "", data: data.access_token }) : "",
-    refresh_token: decryptSecret({ iv: "", data: data.refresh_token }),
+    access_token: data.access_token ? decryptSecret(data.access_token) : "",
+    refresh_token: decryptSecret(data.refresh_token),
   };
 }
 
@@ -222,11 +216,12 @@ export async function getUserAccessToken(
   const needsRefresh = forceRefresh || expires - now < 120_000;
 
   if (!needsRefresh && data.access_token) {
-    return decryptSecret({ iv: "", data: data.access_token });
+    return decryptSecret(data.access_token);
   }
 
-  const refreshToken = decryptSecret({ iv: "", data: data.refresh_token });
+  const refreshToken = decryptSecret(data.refresh_token);
   const fresh = await refreshUserTokens(refreshToken);
-  await storeUserTokens(ownerId, fresh);
+  // eBay's refresh-token grant omits the refresh_token; keep the current one.
+  await storeUserTokens(ownerId, { ...fresh, refresh_token: fresh.refresh_token ?? refreshToken });
   return fresh.access_token;
 }
