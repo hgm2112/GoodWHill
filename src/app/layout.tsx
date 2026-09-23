@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GoodWHill — eBay inventory & bundles",
+  title: "goodwhilly — eBay inventory & bundles",
   description:
     "Track MTG sealed product and bulk inventory, scan barcodes, view your eBay listings, and generate random value bundles.",
 };

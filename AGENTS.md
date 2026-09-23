@@ -1,4 +1,4 @@
-# GoodWHill
+# goodwhilly
 
 A login-protected inventory app for an MTG/eBay reseller. Tracks sealed
 product (scanned by barcode), bulk loose cards (Scryfall-priced), and other

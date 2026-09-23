@@ -91,6 +91,7 @@ export async function POST(request: Request) {
       value_cents: value,
       location_id: locationId,
       notes: get(row, "notes") || null,
+      active: true,
     };
 
     let match: { id: string } | null = null;

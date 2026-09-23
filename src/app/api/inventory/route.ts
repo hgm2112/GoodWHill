@@ -54,15 +54,37 @@ export async function POST(request: Request) {
   }
   const upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;
 
+  // Box-aware sealed duplicate check: the same UPC is allowed in different
+  // boxes (each owns its own stock), but ONLY one row per (owner, upc, box)
+  // — plus at most one unassigned row per UPC.
   if (kindRaw === "sealed" && upc) {
-    const { data: dup } = await supabase
+    const rawLoc = body.location_id ? String(body.location_id) : null;
+    let locationId: string | null = null;
+    if (rawLoc) {
+      const { data: loc } = await supabase
+        .from("locations")
+        .select("id")
+        .eq("id", rawLoc)
+        .eq("owner_id", user.id)
+        .maybeSingle();
+      locationId = loc?.id ?? null;
+    }
+
+    let dupQuery = supabase
       .from("items")
       .select("id")
       .eq("owner_id", user.id)
-      .eq("upc", upc)
-      .maybeSingle();
+      .eq("upc", upc);
+    dupQuery = locationId
+      ? dupQuery.eq("location_id", locationId)
+      : dupQuery.is("location_id", null);
+    const { data: dup } = await dupQuery.maybeSingle();
     if (dup) {
-      return apiError("An item with this UPC already exists", 409, { existingItemId: dup.id });
+      return apiError(
+        locationId ? `This product already exists in that box` : "An item with this UPC already exists",
+        409,
+        { existingItemId: dup.id },
+      );
     }
   }
 

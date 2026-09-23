@@ -3,7 +3,7 @@ import type { ScryfallCard } from "@/lib/types";
 const SCRYFALL = "https://api.scryfall.com";
 
 const headers = {
-  "User-Agent": "GoodWHill/0.1 (ebay inventory app)",
+  "User-Agent": "goodwhilly/0.1 (ebay inventory app)",
   Accept: "application/json",
 };
 

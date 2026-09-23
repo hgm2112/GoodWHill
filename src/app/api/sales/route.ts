@@ -63,7 +63,7 @@ export async function GET(request: Request) {
     return new NextResponse(toCsv(rows), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="goodwhill-sales.csv"',
+        "Content-Disposition": 'attachment; filename="goodwhilly-sales.csv"',
       },
     });
   }

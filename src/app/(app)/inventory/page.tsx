@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { InventoryClient } from "@/components/InventoryClient";
 
-export const metadata = { title: "Inventory · GoodWHill" };
+export const metadata = { title: "Inventory · goodwhilly" };
 
 export default async function InventoryPage() {
   const supabase = await createClient();

@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SalesClient } from "@/components/SalesClient";
 import type { SaleRow } from "@/components/SalesClient";
 
-export const metadata = { title: "Sales · GoodWHill" };
+export const metadata = { title: "Sales · goodwhilly" };
 
 export default async function SalesPage() {
   const supabase = await createClient();

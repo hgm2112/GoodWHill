@@ -97,14 +97,25 @@ export async function POST(request: Request) {
 
   const finalCatalog = { upc, name: catalogName, image_url: imageUrl } as Record<string, unknown>;
 
-  // 2. Find or create the user's item for this UPC.
-  let item: { id: string; quantity: number } | null = null;
-  const { data: existingItem } = await supabase
-    .from("items")
-    .select("*")
-    .eq("owner_id", user.id)
-    .eq("upc", upc)
-    .maybeSingle();
+  // 2. Find or create the user's item for this UPC + box.
+  //    A sealed product now lives in ONE row per box (each with its own stock),
+  //    plus at most one unassigned row per UPC. So lookup must be box-aware.
+  const rawLoc = body?.location_id ? String(body.location_id) : null;
+  let locationId: string | null = null;
+  if (rawLoc) {
+    const { data: loc } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("id", rawLoc)
+      .eq("owner_id", user.id)
+      .maybeSingle();
+    locationId = loc?.id ?? null;
+  }
+
+  let item: { id: string; quantity: number; location_id: (string | null) | undefined } | null = null;
+  let itemQuery = supabase.from("items").select("*").eq("owner_id", user.id).eq("upc", upc);
+  itemQuery = locationId ? itemQuery.eq("location_id", locationId) : itemQuery.is("location_id", null);
+  const { data: existingItem } = await itemQuery.maybeSingle();
 
   if (existingItem) {
     item = existingItem;
@@ -132,6 +143,7 @@ export async function POST(request: Request) {
         image_url: imageUrl,
         location_id: locationId,
         quantity: 0,
+        active: true,
         category: "MTG Sealed",
       })
       .select()

@@ -38,7 +38,7 @@ export function Nav({ email, displayName }: { email: string; displayName: string
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm font-black text-white">
               GW
             </span>
-            <span className="text-lg font-bold tracking-tight">GoodWHill</span>
+            <span className="text-lg font-bold tracking-tight">goodwhilly</span>
           </Link>
 
           <div className="flex items-center gap-2">

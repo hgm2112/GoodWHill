@@ -1,5 +1,5 @@
 -- ============================================================================
--- GoodWHill — initial schema
+-- goodwhilly — initial schema
 -- Run with the Supabase SQL editor or: supabase db push
 -- ============================================================================
 

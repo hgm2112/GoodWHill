@@ -4,7 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { BundleBuilder } from "@/components/BundleBuilder";
 import { centsToUsd, truncated } from "@/lib/utils";
 
-export const metadata = { title: "Bundles · GoodWHill" };
+export const metadata = { title: "Bundles · goodwhilly" };
 
 export default async function BundlesPage() {
   const supabase = await createClient();

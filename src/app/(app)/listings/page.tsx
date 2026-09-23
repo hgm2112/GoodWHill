@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { ListingsClient } from "@/components/ListingsClient";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export const metadata = { title: "eBay Listings · GoodWHill" };
+export const metadata = { title: "eBay Listings · goodwhilly" };
 
 export default async function ListingsPage() {
   const supabase = await createClient();

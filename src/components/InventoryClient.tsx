@@ -295,7 +295,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
           className="btn btn-ghost"
           onClick={() =>
             downloadTextFile(
-              "goodwhill-inventory.csv",
+              "goodwhilly-inventory.csv",
               toCsv([
                 ["name", "kind", "upc", "set_code", "category", "location", "quantity", "unit_cost", "value"],
                 ...filtered.map((i) => [

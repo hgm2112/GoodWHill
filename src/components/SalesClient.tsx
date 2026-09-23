@@ -125,7 +125,7 @@ export function SalesClient({
     try {
       const res = await fetch("/api/sales?export=csv");
       const text = await res.text();
-      downloadTextFile("goodwhill-sales.csv", text, "text/csv");
+      downloadTextFile("goodwhilly-sales.csv", text, "text/csv");
     } catch {
       flash("Export failed");
     }

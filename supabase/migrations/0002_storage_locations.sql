@@ -1,5 +1,5 @@
 -- ============================================================================
--- GoodWHill — named storage locations + remembered scan box
+-- goodwhilly — named storage locations + remembered scan box
 -- Additive over 0001_init.sql. Idempotent: safe to re-run.
 -- ============================================================================
 
