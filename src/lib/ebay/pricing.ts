@@ -22,10 +22,7 @@ export async function getApplicationToken(): Promise<string> {
   }
   const body = new URLSearchParams({
     grant_type: "client_credentials",
-    scope: [
-      "https://api.ebay.com/oauth/api_scope",
-      "https://api.ebay.com/api_scope/commerce.catalog.readonly",
-    ].join(" "),
+    scope: "https://api.ebay.com/oauth/api_scope",
   });
   const res = await fetch(EBAY_PATHS.token, {
     method: "POST",

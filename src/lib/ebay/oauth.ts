@@ -16,10 +16,6 @@ export const EBAY_PATHS = {
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
   "https://api.ebay.com/api_scope/sell.listings",
-  "https://api.ebay.com/api_scope/sell.inventory",
-  "https://api.ebay.com/api_scope/sell.fulfillment",
-  "https://api.ebay.com/api_scope/sell.analytics.readonly",
-  "https://api.ebay.com/api_scope/commerce.catalog.readonly",
 ].join(" ");
 
 export const MARKETPLACE_ID = "EBAY_US";
