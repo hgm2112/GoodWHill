@@ -10,8 +10,9 @@ import { authUser, apiError, getIntParam } from "@/lib/api-helper";
  *   Body: { upc, delta, name?, set_code?, image_url?, location_id? }
  *   1. Upserts the UPC into the shared catalog with a best-effort product
  *      name (from the request, or auto-resolved by GTIN when eBay configured).
- *   2. Creates a sealed item if the user has none for that UPC (stamped with
- *      `location_id` when provided). Existing items are left where they are.
+ *   2. Finds the sealed item for (owner, upc, box, name) — `name` defaults to
+ *      the placeholder `Product <upc>` — and merges stock into it; else creates
+ *      it. Same-UPC products with different names stay separate rows.
  *   3. Adjusts stock by `delta` and logs a movement.
  *   Returns { item, catalog }.
  */
@@ -97,9 +98,12 @@ export async function POST(request: Request) {
 
   const finalCatalog = { upc, name: catalogName, image_url: imageUrl } as Record<string, unknown>;
 
-  // 2. Find or create the user's item for this UPC + box.
-  //    A sealed product now lives in ONE row per box (each with its own stock),
-  //    plus at most one unassigned row per UPC. So lookup must be box-aware.
+  // 2. Find or create the user's item for this UPC + box + name.
+  //    Products that share a barcode (e.g. Final Fantasy commander decks) live
+  //    as SEPARATE rows keyed by their name. The item name used here is either
+  //    the caller-provided name or the stable placeholder `Product <upc>`; the
+  //    eBay-resolved name only feeds the shared catalog (display hint), never
+  //    the item name, so decks never get auto-merged.
   const rawLoc = body?.location_id ? String(body.location_id) : null;
   let locationId: string | null = null;
   if (rawLoc) {
@@ -111,32 +115,30 @@ export async function POST(request: Request) {
       .maybeSingle();
     locationId = loc?.id ?? null;
   }
+  const effectiveName = body?.name ? String(body.name).trim() || `Product ${upc}` : `Product ${upc}`;
+
+  let itemQuery = supabase
+    .from("items")
+    .select("*")
+    .eq("owner_id", user.id)
+    .eq("upc", upc)
+    .eq("name", effectiveName);
+  itemQuery = locationId ? itemQuery.eq("location_id", locationId) : itemQuery.is("location_id", null);
+  const { data: existingItem, error: dupCheckError } = await itemQuery.maybeSingle();
+  if (dupCheckError) {
+    return apiError("Multiple rows found for this product — rename them on the scan page.", 500, { code: "DUP" });
+  }
 
   let item: { id: string; quantity: number; location_id: (string | null) | undefined } | null = null;
-  let itemQuery = supabase.from("items").select("*").eq("owner_id", user.id).eq("upc", upc);
-  itemQuery = locationId ? itemQuery.eq("location_id", locationId) : itemQuery.is("location_id", null);
-  const { data: existingItem } = await itemQuery.maybeSingle();
-
   if (existingItem) {
     item = existingItem;
   } else {
     const setCode = body?.set_code ? String(body.set_code).toUpperCase().slice(0, 12) : null;
-    const rawLoc = body?.location_id ? String(body.location_id) : null;
-    let locationId: string | null = null;
-    if (rawLoc) {
-      const { data: loc } = await supabase
-        .from("locations")
-        .select("id")
-        .eq("id", rawLoc)
-        .eq("owner_id", user.id)
-        .maybeSingle();
-      locationId = loc?.id ?? null;
-    }
     const { data: created, error } = await supabase
       .from("items")
       .insert({
         owner_id: user.id,
-        name: catalogName!,
+        name: effectiveName,
         kind: "sealed",
         upc,
         set_code: setCode,

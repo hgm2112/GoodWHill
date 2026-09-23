@@ -54,9 +54,9 @@ export async function POST(request: Request) {
   }
   const upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;
 
-  // Box-aware sealed duplicate check: the same UPC is allowed in different
-  // boxes (each owns its own stock), but ONLY one row per (owner, upc, box)
-  // — plus at most one unassigned row per UPC.
+  // Name-aware sealed duplicate check: products that share a UPC (e.g. Final
+  // Fantasy commander decks) are separate rows keyed by name, so the same UPC
+  // is only a duplicate when the (owner, upc, box, name) tuple already exists.
   if (kindRaw === "sealed" && upc) {
     const rawLoc = body.location_id ? String(body.location_id) : null;
     let locationId: string | null = null;
@@ -74,14 +74,15 @@ export async function POST(request: Request) {
       .from("items")
       .select("id")
       .eq("owner_id", user.id)
-      .eq("upc", upc);
+      .eq("upc", upc)
+      .eq("name", name);
     dupQuery = locationId
       ? dupQuery.eq("location_id", locationId)
       : dupQuery.is("location_id", null);
     const { data: dup } = await dupQuery.maybeSingle();
     if (dup) {
       return apiError(
-        locationId ? `This product already exists in that box` : "An item with this UPC already exists",
+        locationId ? `An item with this name already exists in that box` : "An item with this UPC & name already exists",
         409,
         { existingItemId: dup.id },
       );

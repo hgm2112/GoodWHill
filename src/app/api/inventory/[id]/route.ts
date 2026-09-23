@@ -30,17 +30,7 @@ export async function PATCH(request: Request, { params }: Params) {
     next.kind = body.kind;
   }
   if ("upc" in body) {
-    const upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;
-    if (upc && upc !== existing.upc) {
-      const { data: dup } = await supabase
-        .from("items")
-        .select("id")
-        .eq("owner_id", user.id)
-        .eq("upc", upc)
-        .maybeSingle();
-      if (dup) return apiError("Another item already has this UPC", 409);
-    }
-    next.upc = upc;
+    next.upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;
   }
   if ("set_code" in body)
     next.set_code = body.set_code ? String(body.set_code).toUpperCase().trim() || null : null;
@@ -64,6 +54,27 @@ export async function PATCH(request: Request, { params }: Params) {
       if (!loc) return apiError("Unknown location", 400);
     }
     next.location_id = value;
+  }
+
+  // Identity is (owner, upc, box, name): edits must not collide with another
+  // row that already has the resulting UPC + name in the resulting box.
+  const finalUpc = ("upc" in next ? (next.upc as string | null) : existing.upc) ?? existing.upc;
+  const finalName = ("name" in next ? (next.name as string | undefined) : existing.name) ?? existing.name;
+  const finalLoc =
+    ("location_id" in next ? (next.location_id as string | null) : existing.location_id) ?? null;
+  if (finalUpc) {
+    let dupQuery = supabase
+      .from("items")
+      .select("id")
+      .eq("owner_id", user.id)
+      .eq("upc", finalUpc)
+      .eq("name", finalName)
+      .neq("id", existing.id);
+    dupQuery = finalLoc ? dupQuery.eq("location_id", finalLoc) : dupQuery.is("location_id", null);
+    const { data: dup } = await dupQuery.maybeSingle();
+    if (dup) {
+      return apiError("Another item with this UPC & name already exists in that box", 409);
+    }
   }
 
   const { data, error } = await supabase

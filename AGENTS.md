@@ -94,9 +94,21 @@ Copy `.env.local.example` → `.env.local`. Keys:
     (`releaseAllocations` in the route).
   - Quantity changes always create an `item_movements` row (reasons: add,
     remove, sale, reserve, release, adjust, import, return).
-  - `POST /api/scan/name` names a scanned UPC: accepts a manual `name`, else
-    resolves from eBay by GTIN, then writes the shared `upc_catalog` AND
-    renames every item the current user has for that UPC.
+  - Sealed item identity is `(owner_id, upc, location_id, name)` (partial
+    unique index `items_upc_loc_name_unique` in `0005_item_name_identity.sql`):
+    products sharing a barcode (e.g. Final Fantasy commander decks) stay
+    separate rows keyed by name; same name + box merges. The eBay-resolved
+    catalog name never becomes the item name — unnamed scans use the stable
+    placeholder `Product <upc>`. Duplicate checks in `/api/scan`, `/api/inventory`,
+    `/api/inventory/[id]`, and `/api/inventory/import` are name-aware.
+  - `POST /api/scan` finds/creates the item for `(owner, upc, box, name)` where
+    `name` is the request `name` or placeholder `Product <upc>`, then adds
+    `delta` stock. The shared `upc_catalog` gets the best-effort (possibly
+    eBay-resolved) display name only.
+  - `POST /api/scan/name` renames ONE inventory row by `item_id` (`{ upc,
+    item_id, name? }`): a manual `name` is trusted, else resolved from eBay by
+    GTIN; 409 if another item already has that name in the same box. It never
+    touches the shared catalog, so same-UPC products keep distinct names.
 
 ## eBay integration
 

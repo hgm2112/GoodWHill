@@ -15,9 +15,8 @@ export function ScanClient() {
   const [history, setHistory] = useState<Array<{ upc: string; at: string; added?: number }>>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [locId, setLocId] = useState("");
-  const [editingName, setEditingName] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [ebayConfigured, setEbayConfigured] = useState(false);
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [rowDraft, setRowDraft] = useState("");
 
   useEffect(() => {
     fetch("/api/locations")
@@ -28,22 +27,15 @@ export function ScanClient() {
         setLocId(data.default_location_id ?? "");
       })
       .catch(() => {});
-    fetch("/api/ebay/status")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => setEbayConfigured(Boolean(data?.configured)))
-      .catch(() => {});
   }, []);
 
-  const isPlaceholder =
-    !result?.catalog?.name || /^Product\s+\d+$/.test(result.catalog.name);
-
-  function startEditName() {
-    setDraftName(result?.catalog?.name ?? `Product ${upc.replace(/\D/g, "")}`);
-    setEditingName(true);
+  function startRowEdit(row: Item) {
+    setEditingRowId(row.id);
+    setRowDraft(row.name);
   }
 
-  async function renameProduct(name?: string) {
-    const code = upc.replace(/\D/g, "");
+  async function saveRowName(row: Item, name?: string) {
+    const code = upc.replace(/\D/g, "") || row.upc?.replace(/\D/g, "") || "";
     if (!code) return;
     setBusy(true);
     setError(null);
@@ -51,19 +43,48 @@ export function ScanClient() {
       const res = await fetch("/api/scan/name", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ upc: code, ...(name ? { name } : {}) }),
+        body: JSON.stringify({ upc: code, item_id: row.id, ...(name ? { name } : {}) }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data?.error ?? "Could not save product name");
+        setError(data?.error ?? "Could not save name");
         return;
       }
-      setDraftName(data.catalog?.name ?? "");
-      setEditingName(false);
-      flash(`Saved: ${data.catalog?.name}`);
+      setEditingRowId(null);
+      flash(`Saved: ${data.item?.name}`);
       runLookup(code);
     } catch {
-      setError("Could not save product name");
+      setError("Could not save name");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addOneToItem(row: Item) {
+    const code = upc.replace(/\D/g, "") || row.upc?.replace(/\D/g, "") || "";
+    if (!code) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          upc: code,
+          delta: 1,
+          location_id: row.location_id || null,
+          name: row.name,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error ?? "Could not add stock");
+        return;
+      }
+      flash(`+1 ${data.item.name} — new stock ${pluralize(data.item.quantity, "unit")}`);
+      runLookup(code);
+    } catch {
+      setError("Could not add stock");
     } finally {
       setBusy(false);
     }
@@ -118,7 +139,6 @@ export function ScanClient() {
           upc: code.replace(/\D/g, ""),
           delta: quantity,
           location_id: locId || null,
-          name: draftName.trim() || undefined,
         }),
       });
       const data = await res.json();
@@ -129,7 +149,9 @@ export function ScanClient() {
       setResult({ catalog: data.catalog, items: [data.item] });
       setHistory((h) => [{ upc: code.replace(/\D/g, ""), at: new Date().toISOString(), added: quantity }, ...h].slice(0, 8));
       flash(`Added ${pluralize(quantity, "unit")} — new stock ${pluralize(data.item.quantity, "unit")}`);
-      runLookup(code.replace(/\D/g, ""));
+      setResult(null);
+      setUpc("");
+      setError(null);
     } catch {
       setError("Could not add stock");
     } finally {
@@ -209,67 +231,17 @@ export function ScanClient() {
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    {editingName ? (
-                      <input
-                        className="input w-full"
-                        value={draftName}
-                        autoFocus
-                        onChange={(e) => setDraftName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") renameProduct(draftName.trim());
-                          if (e.key === "Escape") setEditingName(false);
-                        }}
-                      />
-                    ) : (
-                      <p className="font-semibold leading-snug">
-                        {result.catalog?.name ?? `Product ${upc}`}
-                      </p>
-                    )}
-                    {editingName ? (
-                      <span className="mt-1 flex gap-1">
-                        <button
-                          className="btn btn-ghost px-2 py-0.5 text-xs"
-                          onClick={() => setEditingName(false)}
-                          disabled={busy}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          className="btn btn-primary px-2 py-0.5 text-xs"
-                          onClick={() => renameProduct(draftName.trim())}
-                          disabled={busy || !draftName.trim()}
-                        >
-                          Save
-                        </button>
-                      </span>
-                    ) : (
-                      <button
-                        className="text-xs text-indigo-600 underline-offset-2 hover:underline"
-                        onClick={startEditName}
-                        title="Edit product name"
-                      >
-                        edit name
-                      </button>
-                    )}
+                    <p className="font-semibold leading-snug">
+                      {result.catalog?.name ?? `Product ${upc}`}
+                    </p>
                     <p className="text-xs text-slate-500">UPC {result.catalog?.upc ?? upc}</p>
                     {result.catalog?.set_code && (
                       <p className="text-xs text-slate-500">Set {result.catalog.set_code}</p>
                     )}
-                    {isPlaceholder && (
-                      <p className="text-xs text-slate-400">
-                        {ebayConfigured ? (
-                          <button
-                            className="text-indigo-600 underline-offset-2 hover:underline"
-                            onClick={() => renameProduct()}
-                            disabled={busy}
-                          >
-                            Find name on eBay
-                          </button>
-                        ) : (
-                          "No eBay keys yet — type a name above, or add keys in Settings to auto-name products."
-                        )}
-                      </p>
-                    )}
+                    <p className="text-xs text-slate-400">
+                      Products that share this barcode stay separate by name — name each one in the
+                      list below.
+                    </p>
                     {result.catalog?.ebay_avg_value_cents != null && (
                       <p className="text-xs text-emerald-700">
                         eBay {result.catalog.price_source === "insights" ? "sold avg" : "est."}{" "}
@@ -292,15 +264,78 @@ export function ScanClient() {
                 ) : (
                   <ul className="divide-y divide-slate-100">
                     {result.items.map((item: Item) => (
-                      <li key={item.id} className="flex items-center justify-between py-1.5">
-                        <span className="text-sm">
-                          {item.name}
-                          {item.set_code ? ` (${item.set_code})` : ""}
-                          {item.location_id ? ` · ${locations.find((l) => l.id === item.location_id)?.name ?? "?"}` : ""}
+                      <li key={item.id} className="flex items-center justify-between gap-2 py-1.5">
+                        <span className="min-w-0 flex-1">
+                          {editingRowId === item.id ? (
+                            <input
+                              className="input"
+                              value={rowDraft}
+                              autoFocus
+                              onChange={(e) => setRowDraft(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveRowName(item, rowDraft.trim());
+                                if (e.key === "Escape") setEditingRowId(null);
+                              }}
+                            />
+                          ) : (
+                            <span className="block truncate text-sm">
+                              {item.name}
+                              {item.set_code ? ` (${item.set_code})` : ""}
+                              {item.location_id ? ` · ${locations.find((l) => l.id === item.location_id)?.name ?? "?"}` : ""}
+                              {item.quantity === 0 && (
+                                <span className="ml-1 text-xs text-red-600">0 units</span>
+                              )}
+                            </span>
+                          )}
                         </span>
-                        <span className={`text-sm ${item.quantity === 0 ? "text-red-600" : "text-slate-700"}`}>
-                          {pluralize(item.quantity, "unit")}
-                        </span>
+                        {editingRowId === item.id ? (
+                          <span className="flex shrink-0 gap-1">
+                            <button
+                              className="btn btn-ghost px-2 py-0.5 text-xs"
+                              onClick={() => saveRowName(item)}
+                              disabled={busy}
+                              title="Look up the real name on eBay"
+                            >
+                              eBay
+                            </button>
+                            <button
+                              className="btn btn-ghost px-2 py-0.5 text-xs"
+                              onClick={() => setEditingRowId(null)}
+                              disabled={busy}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              className="btn btn-primary px-2 py-0.5 text-xs"
+                              onClick={() => saveRowName(item, rowDraft.trim())}
+                              disabled={busy || !rowDraft.trim()}
+                            >
+                              Save
+                            </button>
+                          </span>
+                        ) : (
+                          <span className="flex shrink-0 items-center gap-1">
+                            <span className={`text-sm ${item.quantity === 0 ? "text-red-600" : "text-slate-700"}`}>
+                              {pluralize(item.quantity, "unit")}
+                            </span>
+                            <button
+                              className="btn btn-ghost px-2 py-0.5 text-xs"
+                              onClick={() => startRowEdit(item)}
+                              disabled={busy}
+                              title="Rename this item"
+                            >
+                              edit
+                            </button>
+                            <button
+                              className="btn btn-secondary px-2 py-0.5 text-xs"
+                              onClick={() => addOneToItem(item)}
+                              disabled={busy}
+                              title="Add one unit of this exact product"
+                            >
+                              +1
+                            </button>
+                          </span>
+                        )}
                       </li>
                     ))}
                   </ul>

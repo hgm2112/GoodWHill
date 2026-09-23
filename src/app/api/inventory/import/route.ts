@@ -101,6 +101,8 @@ export async function POST(request: Request) {
         .select("id")
         .eq("owner_id", user.id)
         .eq("upc", upc)
+        .eq("name", name)
+        .limit(1)
         .maybeSingle();
       match = data;
     }
@@ -111,6 +113,7 @@ export async function POST(request: Request) {
         .eq("owner_id", user.id)
         .eq("name", name)
         .eq("kind", kind)
+        .limit(1)
         .maybeSingle();
       match = data;
     }
