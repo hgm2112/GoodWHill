@@ -16,20 +16,17 @@ export async function GET(request: Request) {
   const cookieStore = await cookies();
   const expectedState = cookieStore.get("ebay_oauth_state")?.value;
 
-  const appUrl = process.env.APP_URL || request.headers.get("origin") || "";
-  const settingsUrl = `${appUrl}/settings?success=ebay_connected`;
+  const redirectTo = (path: string) => NextResponse.redirect(new URL(path, request.url));
 
   if (error || !code) {
-    return NextResponse.redirect(
-      `${appUrl}/settings?error=${encodeURIComponent(error || "no_code")}`,
-    );
+    return redirectTo(`/settings?error=${encodeURIComponent(error || "no_code")}`);
   }
   if (expectedState && state !== expectedState) {
-    return NextResponse.redirect(`${appUrl}/settings?error=state_mismatch`);
+    return redirectTo("/settings?error=state_mismatch");
   }
 
   if (!ebayConfigured()) {
-    return NextResponse.redirect(`${appUrl}/settings?error=not_configured`);
+    return redirectTo("/settings?error=not_configured");
   }
 
   // Resolve the current user from the session cookie.
@@ -46,15 +43,15 @@ export async function GET(request: Request) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(`${appUrl}/login?error=auth_callback`);
+  if (!user) return redirectTo("/login?error=auth_callback");
 
   try {
     const tokens = await exchangeCodeForTokens(code);
     await storeUserTokens(user.id, tokens);
   } catch (err) {
     console.error("[ebay callback]", err);
-    return NextResponse.redirect(`${appUrl}/settings?error=token_exchange`);
+    return redirectTo("/settings?error=token_exchange");
   }
 
-  return NextResponse.redirect(settingsUrl);
+  return redirectTo("/settings?success=ebay_connected");
 }
