@@ -12,10 +12,17 @@ export const EBAY_PATHS = {
   api: EBAY_IS_SANDBOX ? "https://api.sandbox.ebay.com" : "https://api.ebay.com",
 };
 
-/** Set of scopes needed for listings sync + pricing. */
+/**
+ * Scopes this app's user token needs. MUST be a subset of the scopes granted
+ * to the eBay app (see developer portal → OAuth scopes). The newer Listings
+ * API scope (`sell.listings`) is not granted to legacy apps — requesting it
+ * makes authorization fail with `invalid_scope`. Sync uses the Inventory API
+ * (`sell.inventory.readonly`) and price lookup uses an app token instead.
+ */
 export const EBAY_SCOPES = [
   "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/api_scope/sell.listings",
+  "https://api.ebay.com/oauth/api_scope/sell.listing.read",
+  "https://api.ebay.com/oauth/api_scope/sell.inventory.readonly",
 ].join(" ");
 
 export const MARKETPLACE_ID = "EBAY_US";

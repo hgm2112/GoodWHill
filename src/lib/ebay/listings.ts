@@ -7,19 +7,6 @@ export interface SyncStats {
   total: number;
 }
 
-interface ParsedListing {
-  listingId: string;
-  title: string;
-  priceCents: number | null;
-  currency: string;
-  status: string;
-  availableQuantity: number | null;
-  soldQuantity: number | null;
-  itemHref: string | null;
-  images: string[];
-  endsAt: string | null;
-}
-
 function firstString(...candidates: unknown[]): string | null {
   for (const c of candidates) {
     if (typeof c === "string" && c) return c;
@@ -27,106 +14,71 @@ function firstString(...candidates: unknown[]): string | null {
   return null;
 }
 
-function dig(obj: unknown, path: string[]): unknown {
-  let cur: unknown = obj;
-  for (const key of path) {
-    if (cur && typeof cur === "object" && key in (cur as Record<string, unknown>)) {
-      cur = (cur as Record<string, unknown>)[key];
-    } else {
-      return undefined;
-    }
-  }
-  return cur;
+interface ParsedOffer {
+  offerId: string | null;
+  sku: string | null;
+  listingId: string | null;
+  status: string;
+  priceCents: number | null;
+  currency: string;
+  availableQuantity: number | null;
 }
 
-function parseImages(images: unknown): string[] {
-  const out: string[] = [];
-  const push = (u: unknown) => {
-    if (typeof u === "string" && u.startsWith("http")) out.push(u);
-  };
-  if (Array.isArray(images)) {
-    for (const img of images) {
-      if (typeof img === "string") push(img);
-      else if (img && typeof img === "object") {
-        push(dig(img, ["imageUrl"]));
-        push(dig(img, ["url"]));
-      }
-    }
-  } else if (images && typeof images === "object") {
-    push(dig(images, ["images", "imageUrl"]));
-  }
-  return [...new Set(out)];
-}
+/** One active offer from GET /sell/inventory/v1/offer. */
+function parseOffer(raw: Record<string, unknown>): ParsedOffer | null {
+  const offerId = firstString(raw.offerId);
+  const listingId = firstString(raw.listingId);
+  if (!offerId && !listingId) return null;
 
-/**
- * Normalizes one entry from the Listings API. The API has had several
- * response shapes since its launch, so we defensively probe multiple field
- * paths (Offer / listing / activeListing containers).
- */
-function parseListing(raw: Record<string, unknown>): ParsedListing | null {
-  const listingId = firstString(
-    raw.itemId,
-    raw.listingId,
-    dig(raw, ["listing", "itemId"]),
-    dig(raw, ["offer", "listing", "listingId"]),
-    dig(raw, ["activeListing", "itemId"]),
-  );
-  if (!listingId) return null;
-
-  const priceCents =
-    extractPriceCents(raw.price) ??
-    extractPriceCents(dig(raw, ["offer", "price"])) ??
-    extractPriceCents(dig(raw, ["listing", "price"])) ??
-    extractPriceCents(dig(raw, ["activeListing", "price"]));
-
-  const title = firstString(
-    raw.title,
-    dig(raw, ["listing", "title"]),
-    dig(raw, ["activeListing", "title"]),
-  );
-
-  const status =
-    firstString(raw.status, raw.sellingState) ??
-    firstString(dig(raw, ["listing", "status"])) ??
-    "ACTIVE";
-
-  const available =
-    typeof raw.availableQuantity === "number"
-      ? raw.availableQuantity
-      : (dig(raw, ["offer", "availableQuantity"]) as number | undefined) ?? null;
-
-  const sold =
-    typeof raw.soldQuantity === "number"
-      ? raw.soldQuantity
-      : (dig(raw, ["offer", "soldQuantity"]) as number | undefined) ?? null;
-
-  const endsAt = firstString(
-    raw.listingEndDate as string,
-    dig(raw, ["listing", "listingEndDate"]) as string,
-  )?.replace("Z", "Z");
-
-  const itemHref = firstString(
-    raw.itemHref,
-    dig(raw, ["listing", "itemHref"]) as string,
-  );
-
+  const price = raw.price as Record<string, unknown> | undefined;
   return {
+    offerId,
+    sku: firstString(raw.sku),
     listingId,
-    title: title ?? `eBay listing ${listingId}`,
-    priceCents,
-    currency: "USD",
-    status,
-    availableQuantity: available,
-    soldQuantity: sold,
-    itemHref,
-    images: parseImages(raw.images),
-    endsAt: endsAt ?? null,
+    status: firstString(raw.status) ?? "ACTIVE",
+    priceCents: extractPriceCents(raw.price),
+    currency: typeof price?.currency === "string" ? price.currency : "USD",
+    availableQuantity: typeof raw.availableQuantity === "number" ? raw.availableQuantity : null,
   };
 }
 
+/** ProductTitle + images for an inventory SKU (best effort). */
+async function fetchInventoryItem(
+  accessToken: string,
+  sku: string,
+): Promise<{ title: string | null; images: string[] }> {
+  const url = new URL(
+    `${EBAY_PATHS.api}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+  );
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return { title: null, images: [] };
+
+  const body = (await res.json()) as Record<string, unknown>;
+  const product = (body.product as Record<string, unknown> | undefined) ?? {};
+  const title = firstString(product.title);
+  const images: string[] = [];
+  const urls = Array.isArray(product.imageUrls) ? (product.imageUrls as unknown[]) : [];
+  for (const u of urls) {
+    if (typeof u === "string" && u.startsWith("http")) images.push(u);
+  }
+  return { title, images };
+}
+
 /**
- * Pulls the seller's active listings via the Listings API and upserts them.
- * https://developer.ebay.com/api-docs/sell/listings/resources/listing/methods/getListing
+ * Pulls the seller's active listings via the Inventory API and upserts them.
+ *
+ * The legacy Listings API (/sell/listings/v1/listing) needs the `sell.listings`
+ * scope, which is not granted to legacy eBay apps. The Inventory API offer set
+ * needs only `sell.inventory.readonly` and reflects the seller's active
+ * fixed-price listings. Sold-quantity is not reported by this API, so
+ * quantity_sold is null.
+ *
+ * https://developer.ebay.com/api-docs/sell/inventory/resources/offer/methods/getOffers
  */
 export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
   const supabase = createAdminClient();
@@ -141,15 +93,18 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
     accessToken = await getUserAccessToken(ownerId, true);
   }
 
-  const url = new URL(`${EBAY_PATHS.api}/sell/listings/v1/listing`);
-  url.searchParams.set("limit", "200");
-  url.searchParams.set("status", "ACTIVE");
-
   let inserted = 0;
   let updated = 0;
   let total = 0;
+  let offset = 0;
 
   for (let page = 0; page < 20; page++) {
+    const url = new URL(`${EBAY_PATHS.api}/sell/inventory/v1/offer`);
+    url.searchParams.set("limit", "200");
+    url.searchParams.set("offset", String(offset));
+    url.searchParams.set("status", "ACTIVE");
+    url.searchParams.set("format", "FIXED_PRICE");
+
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -160,31 +115,39 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`eBay listings sync failed (${res.status}): ${text.slice(0, 400)}`);
+      throw new Error(`eBay inventory sync failed (${res.status}): ${text.slice(0, 400)}`);
     }
 
     const body = (await res.json()) as Record<string, unknown>;
-    const rawListings = Array.isArray(body.listings)
-      ? (body.listings as unknown[])
-      : Array.isArray(body.activeListings)
-        ? (body.activeListings as unknown[])
-        : [];
+    const offers = Array.isArray(body.offers) ? (body.offers as unknown[]) : [];
+    const pageTotal = typeof body.total === "number" ? body.total : 0;
 
-    for (const raw of rawListings) {
-      const parsed = parseListing(raw as Record<string, unknown>);
-      if (!parsed) continue;
+    for (const raw of offers) {
+      const offer = parseOffer(raw as Record<string, unknown>);
+      if (!offer) continue;
+
+      const listingId = offer.listingId ?? offer.offerId;
+      if (!listingId) continue;
+
+      let title: string | null = null;
+      let images: string[] = [];
+      if (offer.sku) {
+        const item = await fetchInventoryItem(accessToken, offer.sku);
+        title = item.title;
+        images = item.images;
+      }
 
       const payload = {
-        ebay_listing_id: parsed.listingId,
-        title: parsed.title,
-        price_cents: parsed.priceCents,
-        currency: parsed.currency,
-        status: parsed.status,
-        quantity_available: parsed.availableQuantity,
-        quantity_sold: parsed.soldQuantity,
-        item_uri: parsed.itemHref,
-        image_urls: parsed.images,
-        ended_at: parsed.endsAt,
+        ebay_listing_id: listingId,
+        title: title ?? `eBay listing ${listingId}`,
+        price_cents: offer.priceCents,
+        currency: offer.currency,
+        status: offer.status,
+        quantity_available: offer.availableQuantity,
+        quantity_sold: null,
+        item_uri: offer.listingId ? `https://www.ebay.com/itm/${offer.listingId}` : null,
+        image_urls: images,
+        ended_at: null,
         last_synced_at: new Date().toISOString(),
       };
 
@@ -192,7 +155,7 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
         .from("listings")
         .select("id")
         .eq("owner_id", ownerId)
-        .eq("ebay_listing_id", parsed.listingId)
+        .eq("ebay_listing_id", listingId)
         .maybeSingle();
 
       if (existing) {
@@ -210,21 +173,17 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
       total++;
     }
 
-    const next = body.next as Record<string, unknown> | undefined;
-    const nextHref = typeof body.href === "string" ? body.href : null;
-    const continuation =
-      firstString(dig(next, ["continuationToken"]) as string, next?.continuationToken as string) ??
-      null;
-    const href = nextHref ?? firstString((body.next as string) ?? null);
-
-    if (continuation) {
-      url.searchParams.set("continuationToken", continuation);
-    } else if (href) {
-      const nextUrl = new URL(href);
-      url.searchParams.set("continuationToken", nextUrl.searchParams.get("continuationToken") ?? "");
-      if (!url.searchParams.get("continuationToken")) break;
-    } else {
+    const next = firstString(body.next as string);
+    if (next && next.includes("offset=")) {
+      try {
+        offset = Number(new URL(next).searchParams.get("offset")) || offset + offers.length;
+      } catch {
+        offset += offers.length;
+      }
+    } else if (offers.length === 0 || pageTotal <= offset + offers.length) {
       break;
+    } else {
+      offset += offers.length;
     }
   }
 
