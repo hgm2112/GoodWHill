@@ -34,28 +34,24 @@ export function ArtworkThumb({
 
   return (
     <>
-      <span
-        className="relative inline-block"
+      <button
+        type="button"
+        className={`relative block cursor-zoom-in rounded-md text-left ${className ?? ""}`}
         onMouseEnter={canHover ? () => setHovering(true) : undefined}
         onMouseLeave={canHover ? () => setHovering(false) : undefined}
+        onClick={() => {
+          setHovering(false);
+          setOpen(true);
+        }}
+        aria-label={alt ? `View ${alt} larger` : "View larger"}
       >
-        <button
-          type="button"
-          className={`block cursor-zoom-in rounded-md text-left ${className ?? ""}`}
-          onClick={() => {
-            setHovering(false);
-            setOpen(true);
-          }}
-          aria-label={alt ? `View ${alt} larger` : "View larger"}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={src}
-            alt={alt ?? ""}
-            className="pointer-events-none h-full w-full object-cover"
-          />
-        </button>
-      </span>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={src}
+          alt={alt ?? ""}
+          className="pointer-events-none h-full w-full object-cover"
+        />
+      </button>
 
       {canHover && hovering && (
         <span className="pointer-events-none fixed left-1/2 top-1/2 z-40 -translate-x-1/2 -translate-y-1/2 rounded-lg border border-slate-200 bg-white p-2 shadow-2xl">

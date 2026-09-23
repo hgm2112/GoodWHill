@@ -54,8 +54,9 @@ export async function POST(request: Request) {
     update.price_sample_count = lookup.count;
 
     // Best-effort product resolution to backfill an empty name/image. Deck
-    // variants (shared barcode) get their own box art by name.
-    if (!item.image_url && nameHasVariant(item.name)) {
+    // variants (shared barcode) get their own box art by name, refreshed
+    // every time so stale UPC-level art heals on refresh.
+    if (nameHasVariant(item.name)) {
       update.image_url = (await resolveVariantImage(item.name).catch(() => null)) ?? null;
     }
     if (!item.name || !item.image_url) {

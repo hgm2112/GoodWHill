@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "seed": "tsx scripts/seed-upc-catalog.ts",
+    "backfill-art": "tsx scripts/backfill-variant-art.ts",
     "db:types": "supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > src/lib/database.types.ts"
   },
   "dependencies": {

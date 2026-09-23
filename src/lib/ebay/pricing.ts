@@ -241,10 +241,31 @@ function toStats(entries: BrowseEntry[]): BrowseStats {
   return s ? { averageCents: s.mean, medianCents: s.median, count: s.count } : NO_STATS;
 }
 
+/** Title phrases that package several decks/shared-barcode products ("all 4"). */
+const MULTI_PACK_PATTERNS: RegExp[] = [
+  /\bset of\b/,
+  /\ball \d+\b/,
+  /\bx\d+\b/,
+  /\b\d+ deck\b/,
+  /box set/,
+  /\bbundle\b/,
+  /\bcase of\b/,
+];
+
+function isNotMultiPack(title: string): boolean {
+  const t = title.toLowerCase();
+  return !MULTI_PACK_PATTERNS.some((re) => re.test(t));
+}
+
 /** Keep only listings that match the product name and are NIB/condition-clean. */
 function keepMatching(entries: BrowseEntry[], name: string) {
   const tokens = requiredTokens(name);
-  return entries.filter((e) => titleMatches(tokens, e.title) && isConditionClean(e.title));
+  return entries.filter(
+    (e) =>
+      titleMatches(tokens, e.title) &&
+      isConditionClean(e.title) &&
+      (!nameHasVariant(name) || isNotMultiPack(e.title)),
+  );
 }
 
 /** True when a name carries a "Set: Variant" style sub-name (shared barcodes). */
