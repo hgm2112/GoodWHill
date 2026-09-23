@@ -7,10 +7,12 @@ import { EBAY_PATHS, MARKETPLACE_ID, extractPriceCents } from "@/lib/ebay/oauth"
  *   1. Marketplace Insights API  — real sold items (last 90 days). Restricted:
  *      returns 403 until eBay approves your free access application. When it
  *      works it is the true "average sold".
- *   2. Browse API search by GTIN — CURRENT active asking prices for the
- *      exact product. Always works with standard keys; the estimate uses the
- *      MEDIAN (asking prices are right-skewed and the mean overstates on
- *      outlier listings) and is labeled as such.
+ *   2. Browse API — CURRENT active asking prices. Exact UPC match for
+ *      single-barcode products; for deck variants (shared pack barcode,
+ *      "Set: Variant" names like "Commander Masters: Planeswalker Party")
+ *      a keyword search on the name filtered to matching, condition-clean
+ *      listings. Estimate uses the MEDIAN (asking prices are right-skewed;
+ *      the mean overstates on outlier listings) and is labeled as such.
  *
  * Results are cached on the item / upc_catalog by the caller.
  */
@@ -112,15 +114,80 @@ export async function searchInsights(query: string): Promise<{
   return { averageCents: s.mean, medianCents: s.median, count: s.count };
 }
 
-/** Current asking prices for the exact product via GTIN (UPC). */
-export async function searchActiveByGtin(gtin: string): Promise<{
-  averageCents: number | null;
-  medianCents: number | null;
-  count: number;
-}> {
+/** Filler words in a product name that shouldn't be required in listing titles. */
+const STOPWORDS = new Set([
+  "mtg",
+  "magic",
+  "the",
+  "gathering",
+  "trading",
+  "of",
+  "and",
+  "for",
+  "with",
+  "a",
+  "an",
+  "card",
+  "cards",
+  "game",
+  "games",
+]);
+
+/** Title words that indicate an opened/used/accessory listing, not NIB product. */
+const CONDITION_BLACKLIST = [
+  "playmat",
+  "opened",
+  "sleeved",
+  "sleeves",
+  "used",
+  "damaged",
+  "promo",
+  "promos",
+  "accessor",
+];
+
+/** "Commander Masters: Planeswalker Party" → set "Commander Masters", variant "Planeswalker Party". */
+function splitVariant(name: string): { set: string | null; variant: string | null } {
+  const trimmed = name.trim();
+  if (!trimmed) return { set: null, variant: null };
+  const idx = trimmed.lastIndexOf(":");
+  if (idx > 0) {
+    const set = trimmed.slice(0, idx).trim();
+    const variant = trimmed.slice(idx + 1).trim();
+    if (variant) return { set: set || null, variant };
+  }
+  return { set: null, variant: null };
+}
+
+/** Title terms every kept listing must contain: the variant, else the whole name. */
+function requiredTokens(name: string): string[] {
+  const { set, variant } = splitVariant(name);
+  const head = variant ?? set ?? name;
+  return head
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1 && !STOPWORDS.has(t));
+}
+
+function titleMatches(tokens: string[], title: string): boolean {
+  const t = title.toLowerCase();
+  return tokens.length === 0 || tokens.every((tok) => t.includes(tok));
+}
+
+function isConditionClean(title: string): boolean {
+  // "unopened/unsealed" are good (still NIB) despite containing "opened/sealed".
+  const t = title.toLowerCase().replace(/unopened/g, "").replace(/unsealed/g, "");
+  return !CONDITION_BLACKLIST.some((w) => t.includes(w));
+}
+
+async function browseSearch(params: {
+  q?: string | null;
+  gtin?: string | null;
+}): Promise<Array<{ title: string; cents: number }>> {
   const token = await getApplicationToken();
   const url = new URL(`${EBAY_PATHS.api}/buy/browse/v1/item_summary/search`);
-  url.searchParams.set("gtin", gtin);
+  if (params.q) url.searchParams.set("q", params.q);
+  if (params.gtin) url.searchParams.set("gtin", params.gtin);
   url.searchParams.set("limit", "50");
   url.searchParams.set("filter", "price:[1..5000],buyingOptions:{FIXED_PRICE},deliveryCountry:US");
 
@@ -131,13 +198,76 @@ export async function searchActiveByGtin(gtin: string): Promise<{
       Accept: "application/json",
     },
   });
-  if (!res.ok) return { averageCents: null, medianCents: null, count: 0 };
+  if (!res.ok) return [];
 
   const body = (await res.json()) as { itemSummaries?: unknown[] };
-  const cents = collectListValues(body.itemSummaries ?? [], "price");
-  const s = stats(cents);
-  if (!s) return { averageCents: null, medianCents: null, count: 0 };
-  return { averageCents: s.mean, medianCents: s.median, count: s.count };
+  const out: Array<{ title: string; cents: number }> = [];
+  for (const entry of body.itemSummaries ?? []) {
+    const rec = entry as Record<string, unknown>;
+    const title = rec.title;
+    if (typeof title !== "string") continue;
+    const cents = extractPriceCents(rec.price);
+    if (cents != null && cents > 0) out.push({ title, cents });
+  }
+  return out;
+}
+
+interface BrowseStats {
+  averageCents: number | null;
+  medianCents: number | null;
+  count: number;
+}
+
+const NO_STATS: BrowseStats = { averageCents: null, medianCents: null, count: 0 };
+
+function toStats(entries: Array<{ title: string; cents: number }>): BrowseStats {
+  const s = stats(entries.map((e) => e.cents));
+  return s ? { averageCents: s.mean, medianCents: s.median, count: s.count } : NO_STATS;
+}
+
+/** Keep only listings that match the product name and are NIB/condition-clean. */
+function keepMatching(entries: Array<{ title: string; cents: number }>, name: string) {
+  const tokens = requiredTokens(name);
+  return entries.filter((e) => titleMatches(tokens, e.title) && isConditionClean(e.title));
+}
+
+/**
+ * Current asking prices for a sealed product. Deck variants share a pack
+ * barcode, so when the name carries a variant it is priced by a keyword
+ * search on the name filtered to matching listings — never by raw UPC.
+ * Single-barcode products are matched exactly by GTIN, narrowed by the name
+ * when it agrees. Returns no stats if nothing credible matches.
+ */
+export async function searchActive(opts: {
+  gtin?: string | null;
+  query?: string | null;
+}): Promise<BrowseStats> {
+  const gtin = opts.gtin?.trim() || null;
+  const query = opts.query?.trim() || "";
+  const q = query.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
+  const hasVariant = Boolean(splitVariant(query).variant);
+
+  if (hasVariant) {
+    // Shared pack barcode: the UPC cannot distinguish decks — name only.
+    if (!q) return NO_STATS;
+    return toStats(keepMatching(await browseSearch({ q, gtin: null }), query));
+  }
+
+  if (gtin) {
+    const items = await browseSearch({ q: null, gtin });
+    const matched = keepMatching(items, query);
+    // UPC is authoritative for single-barcode products; the title filter only
+    // narrows when it agrees (never fall back to cross-variant pricing).
+    const pool = matched.length > 0 ? matched : items;
+    const s = toStats(pool);
+    if (s.averageCents != null) return s;
+  }
+
+  if (q) {
+    return toStats(keepMatching(await browseSearch({ q, gtin: null }), query));
+  }
+
+  return NO_STATS;
 }
 
 export interface PriceLookup {
@@ -160,7 +290,9 @@ export function primaryCents(lookup: Pick<PriceLookup, "source" | "averageCents"
 
 /**
  * Full pipeline for a sealed product: Insights sold-data when available,
- * otherwise Browse active-listing estimates by UPC, otherwise nothing.
+ * otherwise a name-aware Browse active-listing estimate (UPC exact-match for
+ * single-barcode products; keyword search on the name for deck variants), or
+ * nothing when no credible listing matches.
  */
 export async function lookupSealedPrice(opts: {
   gtin?: string | null;
@@ -181,16 +313,14 @@ export async function lookupSealedPrice(opts: {
     }
   }
 
-  if (gtin) {
-    const browse = await searchActiveByGtin(gtin);
-    if (browse.averageCents != null) {
-      return {
-        averageCents: browse.averageCents,
-        medianCents: browse.medianCents,
-        count: browse.count,
-        source: "browse_active",
-      };
-    }
+  const browse = await searchActive({ gtin, query: searchQuery });
+  if (browse.averageCents != null) {
+    return {
+      averageCents: browse.averageCents,
+      medianCents: browse.medianCents,
+      count: browse.count,
+      source: "browse_active",
+    };
   }
 
   return { averageCents: null, medianCents: null, count: 0, source: "none" };

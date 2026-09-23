@@ -127,11 +127,16 @@ Copy `.env.local.example` → `.env.local`. Keys:
   `lookupSealedPrice(upc, name?)` tries the Marketplace Insights
   `/buy/marketplace_insights/v1_beta/item_sales/search` (real 90-day sold
   data; restricted, errors until free access is approved) and falls back to
-  Browse API `/buy/browse/v1/item_summary/search?filter=gtin:<upc>` active-
-  listing prices (an estimate from `price.median`/`price.value`). Results are
-  cached in `upc_catalog` / `items` (`ebay_avg_value_cents`,
-  `ebay_median_value_cents`, `price_source`, `price_sample_count`,
-  `price_checked_at`).
+  `searchActive`: Browse API active-listing prices, estimated by the MEDIAN
+  (asking prices are right-skewed). Single-barcode products are matched
+  exactly by GTIN; deck variants (`"Set: Variant"` names — the shared-pack
+  UPC cannot distinguish them, e.g. Commander Masters decks) are priced by a
+  `q` keyword search on the name, filtered to listings whose titles carry the
+  variant tokens and are condition-clean (no playmat/opened/promo/etc.).
+  Returns no price (`source: none`) rather than cross-variant listings when
+  nothing credible matches. Results are cached in `upc_catalog` / `items`
+  (`ebay_avg_value_cents`, `ebay_median_value_cents`, `price_source`,
+  `price_sample_count`, `price_checked_at`).
 - Own listings sync: `src/lib/ebay/listings.ts` `syncEbaysListings(userId)`
   uses the legacy Trading API `GetMyeBaySelling` (ActiveList) — the app is a
   legacy-granted app whose accounts list via the classic/website flow, so the
