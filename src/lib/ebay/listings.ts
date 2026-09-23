@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { MARKETPLACE_ID, EBAY_PATHS, extractPriceCents } from "@/lib/ebay/oauth";
+import { extractPriceCents } from "@/lib/ebay/oauth";
 
 export interface SyncStats {
   inserted: number;
@@ -7,81 +7,106 @@ export interface SyncStats {
   total: number;
 }
 
-function firstString(...candidates: unknown[]): string | null {
-  for (const c of candidates) {
-    if (typeof c === "string" && c) return c;
-  }
-  return null;
+const TRADING_API = "https://api.ebay.com/ws/api.dll";
+const TRADING_HEADERS = {
+  "X-EBAY-API-COMPATIBILITY-LEVEL": "967",
+  "X-EBAY-API-SITEID": "0",
+  "X-EBAY-API-VERSION": "1207",
+  "X-EBAY-API-APP-NAME": process.env.EBAY_CLIENT_ID ?? "",
+  "X-EBAY-API-DEV-NAME": process.env.EBAY_DEV_ID ?? "",
+  "X-EBAY-API-CERT-NAME": process.env.EBAY_CLIENT_SECRET ?? "",
+  "Content-Type": "text/xml",
+} as const;
+
+function grab(xml: string, tag: string): string | null {
+  const m = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`));
+  return m ? m[1].trim() : null;
 }
 
-interface ParsedOffer {
-  offerId: string | null;
-  sku: string | null;
-  listingId: string | null;
-  status: string;
+function xmlUnescape(s: string): string {
+  return s
+    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+interface TradingItem {
+  itemId: string;
+  title: string;
   priceCents: number | null;
   currency: string;
-  availableQuantity: number | null;
+  quantityAvailable: number | null;
+  quantitySold: number | null;
+  listingStatus: string;
+  endTime: string | null;
+  imageUrl: string | null;
 }
 
-/** One active offer from GET /sell/inventory/v1/offer. */
-function parseOffer(raw: Record<string, unknown>): ParsedOffer | null {
-  const offerId = firstString(raw.offerId);
-  const listingId = firstString(raw.listingId);
-  if (!offerId && !listingId) return null;
+/** One <Item> from the GetMyeBaySelling ActiveList payload. */
+function parseTradingItem(xml: string): TradingItem | null {
+  const itemId = grab(xml, "ItemID");
+  if (!itemId) return null;
 
-  const price = raw.price as Record<string, unknown> | undefined;
+  const title = grab(xml, "Title");
+
+  const priceMatch =
+    xml.match(/<CurrentPrice([^>]*)>([\s\S]*?)<\/CurrentPrice>/) ??
+    xml.match(/<BuyItNowPrice([^>]*)>([\s\S]*?)<\/BuyItNowPrice>/) ??
+    xml.match(/<StartPrice([^>]*)>([\s\S]*?)<\/StartPrice>/);
+  const currency = priceMatch?.[1]?.match(/currencyID="([^"]+)"/)?.[1] ?? "USD";
+
+  const endTime = grab(xml, "EndTime");
+  const listingStatus = grab(xml, "ListingStatus") ?? "ACTIVE";
+  const gallery = grab(xml, "GalleryURL");
+
   return {
-    offerId,
-    sku: firstString(raw.sku),
-    listingId,
-    status: firstString(raw.status) ?? "ACTIVE",
-    priceCents: extractPriceCents(raw.price),
-    currency: typeof price?.currency === "string" ? price.currency : "USD",
-    availableQuantity: typeof raw.availableQuantity === "number" ? raw.availableQuantity : null,
+    itemId,
+    title: title ? xmlUnescape(title) : "",
+    priceCents: priceMatch ? extractPriceCents(priceMatch[2]) : null,
+    currency,
+    quantityAvailable: Number(grab(xml, "QuantityAvailable") ?? grab(xml, "Quantity") ?? NaN) || null,
+    quantitySold: Number(grab(xml, "QuantitySold") ?? NaN) || null,
+    listingStatus,
+    endTime: endTime && listingStatus !== "ACTIVE" ? endTime : null,
+    imageUrl: gallery?.startsWith("http") ? gallery : null,
   };
 }
 
-/** ProductTitle + images for an inventory SKU (best effort). */
-async function fetchInventoryItem(
-  accessToken: string,
-  sku: string,
-): Promise<{ title: string | null; images: string[] }> {
-  const url = new URL(
-    `${EBAY_PATHS.api}/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
-  );
-  const res = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Accept-Language": "en-US",
-      Accept: "application/json",
-    },
-  });
-  if (!res.ok) return { title: null, images: [] };
-
-  const body = (await res.json()) as Record<string, unknown>;
-  const product = (body.product as Record<string, unknown> | undefined) ?? {};
-  const title = firstString(product.title);
-  const images: string[] = [];
-  const urls = Array.isArray(product.imageUrls) ? (product.imageUrls as unknown[]) : [];
-  for (const u of urls) {
-    if (typeof u === "string" && u.startsWith("http")) images.push(u);
-  }
-  return { title, images };
+function buildRequest(accessToken: string, pageNumber: number): string {
+  return `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <ActiveList>
+    <Pagination>
+      <EntriesPerPage>200</EntriesPerPage>
+      <PageNumber>${pageNumber}</PageNumber>
+    </Pagination>
+  </ActiveList>
+  <RequesterCredentials><eBayAuthToken>${accessToken}</eBayAuthToken></RequesterCredentials>
+</GetMyeBaySellingRequest>`;
 }
 
 /**
- * Pulls the seller's active listings via the Inventory API and upserts them.
+ * Pulls the seller's currently-active listings via the legacy Trading API
+ * `GetMyeBaySelling` (ActiveList) and upserts them into `listings`.
  *
- * The legacy Listings API (/sell/listings/v1/listing) needs the `sell.listings`
- * scope, which is not granted to legacy eBay apps. The Inventory API offer set
- * needs only `sell.inventory.readonly` and reflects the seller's active
- * fixed-price listings. Sold-quantity is not reported by this API, so
- * quantity_sold is null.
+ * The newer Listings API (`/sell/listings/v1/listing`) needs the `sell.listings`
+ * scope, which is not granted to legacy eBay apps, and the Inventory API only
+ * covers listings created through it (this account lists via the classic flow,
+ * so it has zero inventory items). The Trading API works with the existing
+ * OAuth token passed in `<RequesterCredentials><eBayAuthToken>` plus the
+ * App/Dev/Cert ID headers, with no extra scope. ActiveList is capped at ~400
+ * results, which is fine for this seller.
  *
- * https://developer.ebay.com/api-docs/sell/inventory/resources/offer/methods/getOffers
+ * https://developer.ebay.com/api-docs/legacy/selling/retired/overview.html
  */
 export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
+  if (!process.env.EBAY_DEV_ID) {
+    throw new Error("EBAY_NOT_CONFIGURED: EBAY_DEV_ID is required for listing sync");
+  }
+
   const supabase = createAdminClient();
   let accessToken: string;
 
@@ -97,59 +122,43 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
   let inserted = 0;
   let updated = 0;
   let total = 0;
-  let offset = 0;
 
-  for (let page = 0; page < 20; page++) {
-    const url = new URL(`${EBAY_PATHS.api}/sell/inventory/v1/offer`);
-    url.searchParams.set("limit", "200");
-    url.searchParams.set("offset", String(offset));
-    url.searchParams.set("status", "ACTIVE");
-    url.searchParams.set("format", "FIXED_PRICE");
-
-    const res = await fetch(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Accept-Language": "en-US",
-        "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
-        Accept: "application/json",
-      },
+  for (let page = 1; page <= 30; page++) {
+    const res = await fetch(TRADING_API, {
+      method: "POST",
+      headers: { ...TRADING_HEADERS, "X-EBAY-API-CALL-NAME": "GetMyeBaySelling" },
+      body: buildRequest(accessToken, page),
     });
-
     if (!res.ok) {
       const text = await res.text().catch(() => "");
-      throw new Error(`eBay inventory sync failed (${res.status}): ${text.slice(0, 400)}`);
+      throw new Error(`eBay listing sync failed (${res.status}): ${text.slice(0, 400)}`);
     }
 
-    const body = (await res.json()) as Record<string, unknown>;
-    const offers = Array.isArray(body.offers) ? (body.offers as unknown[]) : [];
-    const pageTotal = typeof body.total === "number" ? body.total : 0;
+    const xml = await res.text();
+    const ack = grab(xml, "Ack");
+    if (ack !== "Success") {
+      const messages = [...xml.matchAll(/<ShortMessage>([\s\S]*?)<\/ShortMessage>/g)]
+        .slice(0, 2)
+        .map((m) => m[1].trim());
+      throw new Error(`eBay listing sync failed: ${messages.join("; ") || "unknown Trading API error"}`);
+    }
 
-    for (const raw of offers) {
-      const offer = parseOffer(raw as Record<string, unknown>);
-      if (!offer) continue;
+    const items = [...xml.matchAll(/<Item>([\s\S]*?)<\/Item>/g)]
+      .map((m) => parseTradingItem(m[1]))
+      .filter((item): item is TradingItem => Boolean(item && item.listingStatus !== "Ended"));
 
-      const listingId = offer.listingId ?? offer.offerId;
-      if (!listingId) continue;
-
-      let title: string | null = null;
-      let images: string[] = [];
-      if (offer.sku) {
-        const item = await fetchInventoryItem(accessToken, offer.sku);
-        title = item.title;
-        images = item.images;
-      }
-
+    for (const item of items) {
       const payload = {
-        ebay_listing_id: listingId,
-        title: title ?? `eBay listing ${listingId}`,
-        price_cents: offer.priceCents,
-        currency: offer.currency,
-        status: offer.status,
-        quantity_available: offer.availableQuantity,
-        quantity_sold: null,
-        item_uri: offer.listingId ? `https://www.ebay.com/itm/${offer.listingId}` : null,
-        image_urls: images,
-        ended_at: null,
+        ebay_listing_id: item.itemId,
+        title: item.title || `eBay listing ${item.itemId}`,
+        price_cents: item.priceCents,
+        currency: item.currency,
+        status: item.listingStatus || "ACTIVE",
+        quantity_available: item.quantityAvailable,
+        quantity_sold: item.quantitySold,
+        item_uri: `https://www.ebay.com/itm/${item.itemId}`,
+        image_urls: item.imageUrl ? [item.imageUrl] : [],
+        ended_at: item.endTime,
         last_synced_at: new Date().toISOString(),
       };
 
@@ -157,14 +166,11 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
         .from("listings")
         .select("id")
         .eq("owner_id", ownerId)
-        .eq("ebay_listing_id", listingId)
+        .eq("ebay_listing_id", item.itemId)
         .maybeSingle();
 
       if (existing) {
-        const { error } = await supabase
-          .from("listings")
-          .update(payload)
-          .eq("id", existing.id);
+        const { error } = await supabase.from("listings").update(payload).eq("id", existing.id);
         if (!error) updated++;
       } else {
         const { error } = await supabase
@@ -175,18 +181,8 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
       total++;
     }
 
-    const next = firstString(body.next as string);
-    if (next && next.includes("offset=")) {
-      try {
-        offset = Number(new URL(next).searchParams.get("offset")) || offset + offers.length;
-      } catch {
-        offset += offers.length;
-      }
-    } else if (offers.length === 0 || pageTotal <= offset + offers.length) {
-      break;
-    } else {
-      offset += offers.length;
-    }
+    const pages = Number(grab(xml, "TotalNumberOfPages") ?? "0");
+    if (!pages || page >= pages) break;
   }
 
   return { inserted, updated, total };

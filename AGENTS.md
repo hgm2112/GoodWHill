@@ -47,6 +47,7 @@ Copy `.env.local.example` → `.env.local`. Keys:
 | `EBAY_CLIENT_ID` | eBay App ID |
 | `EBAY_CLIENT_SECRET` | eBay cert |
 | `EBAY_RUNAME` | registered RuName — also the OAuth `redirect_uri` |
+| `EBAY_DEV_ID` | eBay Dev ID (required for Trading-API listing sync) |
 | `EBAY_ENV` | `prod` or `sandbox` |
 | `EBAY_TOKEN_ENCRYPTION_KEY` | 64 hex chars; AES-256-GCM for stored eBay tokens. Falls back to plaintext with a `console.warn` if unset (dev only). |
 
@@ -132,8 +133,12 @@ Copy `.env.local.example` → `.env.local`. Keys:
   `ebay_median_value_cents`, `price_source`, `price_sample_count`,
   `price_checked_at`).
 - Own listings sync: `src/lib/ebay/listings.ts` `syncEbaysListings(userId)`
-  pulls `GET /sell/listings/v1/listing?status=ACTIVE` and upserts the
-  `listings` table with defensive shape-parsing (eBay responses change shape).
+  uses the legacy Trading API `GetMyeBaySelling` (ActiveList) — the app is a
+  legacy-granted app whose accounts list via the classic/website flow, so the
+  Inventory API returns nothing and the Listings API scope (`sell.listings`) is
+  not granted. The OAuth token rides in `<RequesterCredentials><eBayAuthToken>`
+  and the App/Dev/Cert ID headers come from `EBAY_CLIENT_ID`/`EBAY_DEV_ID`/
+  `EBAY_CLIENT_SECRET`. Results are paged and upserted into `listings`.
   Triggered manually by users and via the daily `POST /api/cron/sync-ebay`
   (guarded by `CRON_SECRET`; `maxDuration: 120`).
 - Match eBay listings to local items on `ebay_item_id`/`item_id` where
