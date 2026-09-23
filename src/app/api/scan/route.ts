@@ -57,13 +57,16 @@ export async function POST(request: Request) {
   if (delta <= 0 || delta > 10000) return apiError("delta must be 1..10000");
 
   // 1. UPSERT catalog entry.
+  //    `product_name` is the catalog "main" name (e.g. "Final Fantasy");
+  //    `name` is the full item name for a specific deck row (e.g.
+  //    "Final Fantasy: Limit Break") and must never become the shared title.
   const { data: existingCatalog } = await supabase
     .from("upc_catalog")
     .select("*")
     .eq("upc", upc)
     .maybeSingle();
 
-  let catalogName = body?.name ? String(body.name).trim() : null;
+  let catalogName = body?.product_name ? String(body.product_name).trim() : null;
   let imageUrl = body?.image_url ? String(body.image_url).trim() : null;
 
   const tryResolveFromEbay = async () => {
@@ -95,6 +98,7 @@ export async function POST(request: Request) {
     }
   } else {
     // Auto-resolve product name by GTIN when eBay is configured.
+    if (!catalogName && body?.name) catalogName = String(body.name).trim();
     if (!catalogName) {
       await tryResolveFromEbay();
     }

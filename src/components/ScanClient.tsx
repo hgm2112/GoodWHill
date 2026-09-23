@@ -18,6 +18,15 @@ export function ScanClient() {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [rowEditMain, setRowEditMain] = useState("");
   const [rowEditSub, setRowEditSub] = useState("");
+  const [productDraft, setProductDraft] = useState("");
+  const [subDraft, setSubDraft] = useState("");
+
+  useEffect(() => {
+    if (result?.catalog?.upc) {
+      setProductDraft(result.catalog.name ?? `Product ${result.catalog.upc}`);
+      setSubDraft("");
+    }
+  }, [result?.catalog?.upc, result?.catalog?.name]);
 
   useEffect(() => {
     fetch("/api/locations")
@@ -152,13 +161,18 @@ export function ScanClient() {
     setBusy(true);
     setError(null);
     try {
+      const cleanCode = code.replace(/\D/g, "");
+      const main = productDraft.trim() || result?.catalog?.name || `Product ${cleanCode}`;
+      const full = subDraft.trim() ? `${main}: ${subDraft.trim()}` : main;
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          upc: code.replace(/\D/g, ""),
+          upc: cleanCode,
           delta: quantity,
           location_id: locId || null,
+          name: full,
+          product_name: main,
         }),
       });
       const data = await res.json();
@@ -167,7 +181,7 @@ export function ScanClient() {
         return;
       }
       setResult({ catalog: data.catalog, items: [data.item] });
-      setHistory((h) => [{ upc: code.replace(/\D/g, ""), at: new Date().toISOString(), added: quantity }, ...h].slice(0, 8));
+      setHistory((h) => [{ upc: cleanCode, at: new Date().toISOString(), added: quantity }, ...h].slice(0, 8));
       flash(`Added ${pluralize(quantity, "unit")} — new stock ${pluralize(data.item.quantity, "unit")}`);
       setResult(null);
       setUpc("");
@@ -251,17 +265,44 @@ export function ScanClient() {
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold leading-snug">
-                      {result.catalog?.name ?? `Product ${upc}`}
-                    </p>
-                    <p className="text-xs text-slate-500">UPC {result.catalog?.upc ?? upc}</p>
+                    <span>
+                      <label className="label">Product name</label>
+                      <input
+                        className="input"
+                        value={productDraft}
+                        onChange={(e) => setProductDraft(e.target.value)}
+                        placeholder={`Product ${upc}`}
+                      />
+                    </span>
+                    <span className="mt-1 block">
+                      <label className="label">Sub name (deck) — optional</label>
+                      <input
+                        className="input"
+                        value={subDraft}
+                        onChange={(e) => setSubDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addStock(upc, delta);
+                        }}
+                        placeholder="e.g. Limit Break"
+                      />
+                    </span>
+                    <p className="mt-1 text-xs text-slate-500">UPC {result.catalog?.upc ?? upc}</p>
                     {result.catalog?.set_code && (
                       <p className="text-xs text-slate-500">Set {result.catalog.set_code}</p>
                     )}
-                    <p className="text-xs text-slate-400">
-                      Products that share this barcode stay separate by name — name each one in the
-                      list below.
-                    </p>
+                    {subDraft.trim() ? (
+                      <p className="mt-1 text-xs text-slate-400">
+                        Will save as{" "}
+                        <span className="font-medium text-slate-600">
+                          {productDraft.trim() || `Product ${upc}`}: {subDraft.trim()}
+                        </span>
+                        .
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-slate-400">
+                        Decks sharing this barcode stay separate — type the deck&apos;s sub name above.
+                      </p>
+                    )}
                     {result.catalog?.ebay_avg_value_cents != null && (
                       <p className="text-xs text-emerald-700">
                         eBay {result.catalog.price_source === "insights" ? "sold avg" : "est."}{" "}
@@ -393,7 +434,7 @@ export function ScanClient() {
                   onClick={() => addStock(upc, delta)}
                   disabled={busy || !upc.replace(/\D/g, "")}
                 >
-                  {result.items.length ? "Add stock to item" : "Add to inventory & stock"}
+                  {subDraft.trim() ? "Add deck to inventory & stock" : "Add to inventory & stock"}
                 </button>
               </div>
             </div>
