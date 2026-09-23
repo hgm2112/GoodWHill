@@ -53,6 +53,7 @@ async function fetchInventoryItem(
   const res = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
+      "Accept-Language": "en-US",
       Accept: "application/json",
     },
   });
@@ -108,6 +109,7 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
     const res = await fetch(url, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        "Accept-Language": "en-US",
         "X-EBAY-C-MARKETPLACE-ID": MARKETPLACE_ID,
         Accept: "application/json",
       },
