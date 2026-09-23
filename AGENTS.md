@@ -101,7 +101,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     "main" name (resolved title or stable placeholder `Product <upc>`) is the
     unnamed row's name; the deck variant (`sub_name`) qualifies it into
     `<main>: <sub>`. Duplicate checks in `/api/scan`, `/api/inventory`,
-    `/api/inventory/[id]`, and `/api/inventory/import` are name-aware.
+    `/api/inventory/[id]`, and `/api/inventory/import` are name-aware and
+    compare with `normalizeName` (`lower(trim())`, matching the index) so
+    case-variant names merge instead of hitting a `23505`.
   - `POST /api/scan` finds/creates the item for `(owner, upc, box, name)`
     where `name` is the request `name` or the catalog main name (resolved
     title or placeholder `Product <upc>`) for unnamed scans; then adds `delta`

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
+import { normalizeName } from "@/lib/utils";
 
 /** GET /api/inventory?kind=&q=&location_id=&unassigned=&includeInactive= */
 export async function GET(request: Request) {
@@ -72,14 +73,14 @@ export async function POST(request: Request) {
 
     let dupQuery = supabase
       .from("items")
-      .select("id")
+      .select("id, name")
       .eq("owner_id", user.id)
-      .eq("upc", upc)
-      .eq("name", name);
+      .eq("upc", upc);
     dupQuery = locationId
       ? dupQuery.eq("location_id", locationId)
       : dupQuery.is("location_id", null);
-    const { data: dup } = await dupQuery.maybeSingle();
+    const { data: rows } = await dupQuery;
+    const dup = (rows ?? []).find((r) => normalizeName(r.name) === normalizeName(name));
     if (dup) {
       return apiError(
         locationId ? `An item with this name already exists in that box` : "An item with this UPC & name already exists",

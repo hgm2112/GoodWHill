@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
+import { normalizeName } from "@/lib/utils";
 
 /**
  * POST /api/scan/name — name ONE inventory row for a scanned UPC.
@@ -100,16 +101,17 @@ export async function POST(request: Request) {
   }
 
   // Another item with the same (upc, box, full name) would collapse into this
-  // one — direct the user to add stock to that row instead.
+  // one — compare case-insensitively, matching the unique index. Direct the
+  // user to add stock to that row instead.
   let dupQuery = supabase
     .from("items")
-    .select("id")
+    .select("id, name")
     .eq("owner_id", user.id)
     .eq("upc", upc)
-    .eq("name", fullName)
     .neq("id", itemId);
   dupQuery = item.location_id ? dupQuery.eq("location_id", item.location_id) : dupQuery.is("location_id", null);
-  const { data: dup } = await dupQuery.maybeSingle();
+  const { data: rows } = await dupQuery;
+  const dup = (rows ?? []).find((r) => normalizeName(r.name) === normalizeName(fullName));
   if (dup) {
     return apiError("An item with this name already exists in that box — add stock to it instead.", 409, {
       code: "NAME_EXISTS",

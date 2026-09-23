@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
+import { normalizeName } from "@/lib/utils";
 
 /**
  * GET  /api/scan?upc=XXXXXXXX — resolve a scanned barcode.
@@ -66,7 +67,8 @@ export async function POST(request: Request) {
     .eq("upc", upc)
     .maybeSingle();
 
-  let catalogName = body?.product_name ? String(body.product_name).trim() : null;
+  const userProvidedMain = body?.product_name ? String(body.product_name).trim() : null;
+  let catalogName = userProvidedMain;
   let imageUrl = body?.image_url ? String(body.image_url).trim() : null;
 
   const tryResolveFromEbay = async () => {
@@ -82,18 +84,37 @@ export async function POST(request: Request) {
     }
   };
 
+  const backfillPlaceholders = async (oldName: string) => {
+    if (!catalogName || oldName === catalogName) return;
+    await supabase
+      .from("items")
+      .update({ name: catalogName })
+      .eq("owner_id", user.id)
+      .eq("upc", upc)
+      .in("name", [oldName, `Product ${upc}`]);
+  };
+
   if (existingCatalog) {
     const oldName = existingCatalog.name;
     if (!catalogName) catalogName = oldName;
     if (!imageUrl) imageUrl = existingCatalog.image_url;
-    // Upgrade an unresolved placeholder catalog to a real name when keys exist.
-    if (/^Product\s+\d+$/.test(catalogName ?? "")) {
+    if (userProvidedMain && userProvidedMain !== oldName) {
+      // User named the product during scan — persist it to the shared catalog
+      // and keep the placeholder rows in step.
+      await supabase
+        .from("upc_catalog")
+        .update({ name: userProvidedMain, image_url: imageUrl ?? existingCatalog.image_url })
+        .eq("upc", upc);
+      await backfillPlaceholders(oldName);
+    } else if (/^Product\s+\d+$/.test(catalogName ?? "")) {
+      // Upgrade an unresolved placeholder catalog to a real name via eBay.
       await tryResolveFromEbay();
       if (catalogName && catalogName !== oldName) {
         await supabase
           .from("upc_catalog")
-          .update({ name: catalogName })
+          .update({ name: catalogName, image_url: imageUrl ?? existingCatalog.image_url })
           .eq("upc", upc);
+        await backfillPlaceholders(oldName);
       }
     }
   } else {
@@ -118,18 +139,6 @@ export async function POST(request: Request) {
 
   const finalCatalog = { upc, name: catalogName, image_url: imageUrl } as Record<string, unknown>;
 
-  // 2. Backfill the user's placeholder rows (`Product <upc>` or the old catalog
-  //    name) to the current catalog name, so unnamed scans keep merging into a
-  //    single row even after the main product name gets resolved/renamed.
-  if (existingCatalog && catalogName && existingCatalog.name !== catalogName) {
-    await supabase
-      .from("items")
-      .update({ name: catalogName })
-      .eq("owner_id", user.id)
-      .eq("upc", upc)
-      .in("name", [existingCatalog.name, `Product ${upc}`]);
-  }
-
   // 2. Find or create the user's item for this UPC + box + name.
   //    Products that share a barcode (e.g. Final Fantasy commander decks) live
   //    as SEPARATE rows keyed by their full name. The item name is the catalog
@@ -149,22 +158,23 @@ export async function POST(request: Request) {
   }
   const effectiveName = body?.name ? String(body.name).trim() : (catalogName ?? `Product ${upc}`);
 
-  let itemQuery = supabase
-    .from("items")
-    .select("*")
-    .eq("owner_id", user.id)
-    .eq("upc", upc)
-    .eq("name", effectiveName);
-  itemQuery = locationId ? itemQuery.eq("location_id", locationId) : itemQuery.is("location_id", null);
-  const { data: existingItem, error: dupCheckError } = await itemQuery.maybeSingle();
-  if (dupCheckError) {
-    return apiError("Multiple rows found for this product — rename them on the scan page.", 500, { code: "DUP" });
-  }
+  // Match name the same way the unique index does (case-insensitive trimmed) so
+  // a deck typed with different casing merges instead of violating the index.
+  const findItem = async () => {
+    let query = supabase
+      .from("items")
+      .select("*")
+      .eq("owner_id", user.id)
+      .eq("upc", upc);
+    query = locationId ? query.eq("location_id", locationId) : query.is("location_id", null);
+    const { data: rows } = await query;
+    return (rows ?? []).find((r) => normalizeName(r.name) === normalizeName(effectiveName)) ?? null;
+  };
 
   let item: { id: string; quantity: number; location_id: (string | null) | undefined } | null = null;
-  if (existingItem) {
-    item = existingItem;
-  } else {
+  item = await findItem();
+
+  if (!item) {
     const setCode = body?.set_code ? String(body.set_code).toUpperCase().slice(0, 12) : null;
     const { data: created, error } = await supabase
       .from("items")
@@ -182,9 +192,18 @@ export async function POST(request: Request) {
       })
       .select()
       .single();
-    if (error) return apiError(error.message, 500, { code: "DB" });
-    item = created;
-    finalCatalog.createdItem = true;
+    if (error) {
+      if (error.code === "23505") {
+        // Race: another request inserted the same row a moment ago — merge into it.
+        item = await findItem();
+        if (!item) return apiError(error.message, 500, { code: "DB" });
+      } else {
+        return apiError(error.message, 500, { code: "DB" });
+      }
+    } else {
+      item = created;
+      finalCatalog.createdItem = true;
+    }
   }
 
   // 3. Add stock.

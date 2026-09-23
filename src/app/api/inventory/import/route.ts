@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getCents } from "@/lib/api-helper";
-import { parseCsv } from "@/lib/utils";
+import { parseCsv, normalizeName } from "@/lib/utils";
 
 /**
  * POST /api/inventory/import — bulk import from CSV.
@@ -98,24 +98,20 @@ export async function POST(request: Request) {
     if (upc) {
       const { data } = await supabase
         .from("items")
-        .select("id")
+        .select("id, name, kind")
         .eq("owner_id", user.id)
         .eq("upc", upc)
-        .eq("name", name)
-        .limit(1)
-        .maybeSingle();
-      match = data;
+        .limit(50);
+      match = (data ?? []).find((r) => normalizeName(r.name) === normalizeName(name)) ?? null;
     }
     if (!match) {
       const { data } = await supabase
         .from("items")
-        .select("id")
+        .select("id, name, kind")
         .eq("owner_id", user.id)
-        .eq("name", name)
         .eq("kind", kind)
-        .limit(1)
-        .maybeSingle();
-      match = data;
+        .limit(50);
+      match = (data ?? []).find((r) => normalizeName(r.name) === normalizeName(name)) ?? null;
     }
 
     if (match) {

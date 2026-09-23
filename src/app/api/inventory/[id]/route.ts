@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
+import { normalizeName } from "@/lib/utils";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -58,6 +59,7 @@ export async function PATCH(request: Request, { params }: Params) {
 
   // Identity is (owner, upc, box, name): edits must not collide with another
   // row that already has the resulting UPC + name in the resulting box.
+  // Compare case-insensitively (matches items_upc_loc_name_unique).
   const finalUpc = ("upc" in next ? (next.upc as string | null) : existing.upc) ?? existing.upc;
   const finalName = ("name" in next ? (next.name as string | undefined) : existing.name) ?? existing.name;
   const finalLoc =
@@ -65,13 +67,13 @@ export async function PATCH(request: Request, { params }: Params) {
   if (finalUpc) {
     let dupQuery = supabase
       .from("items")
-      .select("id")
+      .select("id, name")
       .eq("owner_id", user.id)
       .eq("upc", finalUpc)
-      .eq("name", finalName)
       .neq("id", existing.id);
     dupQuery = finalLoc ? dupQuery.eq("location_id", finalLoc) : dupQuery.is("location_id", null);
-    const { data: dup } = await dupQuery.maybeSingle();
+    const { data: rows } = await dupQuery;
+    const dup = (rows ?? []).find((r) => normalizeName(r.name) === normalizeName(finalName));
     if (dup) {
       return apiError("Another item with this UPC & name already exists in that box", 409);
     }

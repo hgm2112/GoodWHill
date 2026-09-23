@@ -42,6 +42,11 @@ export function pluralize(count: number, singular: string, plural?: string): str
   return `${count} ${count === 1 ? singular : plural ?? singular + "s"}`;
 }
 
+/** Matches the items_upc_loc_name_unique index semantics (lower(trim(name))). */
+export function normalizeName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
 /** RFC 4180-ish CSV parser (handles quoted fields, embedded commas/newlines). */
 export function parseCsv(text: string): string[][] {
   const rows: string[][] = [];
