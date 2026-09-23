@@ -15,7 +15,7 @@ export async function GET() {
   const admin = createAdminClient();
   const { data } = await admin
     .from("ebay_tokens")
-    .select("created_at, updated_at")
+    .select("connected_at, updated_at")
     .eq("owner_id", auth.user.id)
     .maybeSingle();
 
@@ -23,7 +23,7 @@ export async function GET() {
     configured,
     connected: Boolean(data),
     env: process.env.EBAY_ENV === "sandbox" ? "sandbox" : "prod",
-    connectedAt: data?.created_at ?? null,
+    connectedAt: data?.connected_at ?? null,
     lastUpdated: data?.updated_at ?? null,
   });
 }
