@@ -97,18 +97,22 @@ Copy `.env.local.example` → `.env.local`. Keys:
   - Sealed item identity is `(owner_id, upc, location_id, name)` (partial
     unique index `items_upc_loc_name_unique` in `0005_item_name_identity.sql`):
     products sharing a barcode (e.g. Final Fantasy commander decks) stay
-    separate rows keyed by name; same name + box merges. The eBay-resolved
-    catalog name never becomes the item name — unnamed scans use the stable
-    placeholder `Product <upc>`. Duplicate checks in `/api/scan`, `/api/inventory`,
+    separate rows keyed by name; same full name + box merges. The catalog
+    "main" name (resolved title or stable placeholder `Product <upc>`) is the
+    unnamed row's name; the deck variant (`sub_name`) qualifies it into
+    `<main>: <sub>`. Duplicate checks in `/api/scan`, `/api/inventory`,
     `/api/inventory/[id]`, and `/api/inventory/import` are name-aware.
-  - `POST /api/scan` finds/creates the item for `(owner, upc, box, name)` where
-    `name` is the request `name` or placeholder `Product <upc>`, then adds
-    `delta` stock. The shared `upc_catalog` gets the best-effort (possibly
-    eBay-resolved) display name only.
-  - `POST /api/scan/name` renames ONE inventory row by `item_id` (`{ upc,
-    item_id, name? }`): a manual `name` is trusted, else resolved from eBay by
-    GTIN; 409 if another item already has that name in the same box. It never
-    touches the shared catalog, so same-UPC products keep distinct names.
+  - `POST /api/scan` finds/creates the item for `(owner, upc, box, name)`
+    where `name` is the request `name` or the catalog main name (resolved
+    title or placeholder `Product <upc>`) for unnamed scans; then adds `delta`
+    stock. When the catalog main name changes, placeholder rows (old name or
+    `Product <upc>`) are backfilled to merge unnamed scans into one row.
+  - `POST /api/scan/name` names ONE inventory row (`{ upc, item_id,
+    product_name?, sub_name? }`): `product_name` sets the shared catalog main
+    name (defaults: existing catalog name, else eBay GTIN resolve); `sub_name`
+    is the deck variant and composes the full item name
+    `${product_name}: ${sub_name}` (no sub → just the main name). 409 if
+    another item already has that full name in the same box.
 
 ## eBay integration
 

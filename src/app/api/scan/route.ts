@@ -11,8 +11,9 @@ import { authUser, apiError, getIntParam } from "@/lib/api-helper";
  *   1. Upserts the UPC into the shared catalog with a best-effort product
  *      name (from the request, or auto-resolved by GTIN when eBay configured).
  *   2. Finds the sealed item for (owner, upc, box, name) — `name` defaults to
- *      the placeholder `Product <upc>` — and merges stock into it; else creates
- *      it. Same-UPC products with different names stay separate rows.
+ *      the catalog main name (a resolved product title or `Product <upc>`),
+ *      else the caller-provided name for a specific deck row — and merges
+ *      stock into it; creates the row if missing.
  *   3. Adjusts stock by `delta` and logs a movement.
  *   Returns { item, catalog }.
  */
@@ -65,22 +66,37 @@ export async function POST(request: Request) {
   let catalogName = body?.name ? String(body.name).trim() : null;
   let imageUrl = body?.image_url ? String(body.image_url).trim() : null;
 
+  const tryResolveFromEbay = async () => {
+    const { resolveProductByGtin } = await import("@/lib/ebay/pricing");
+    try {
+      const product = await resolveProductByGtin(upc);
+      if (product?.name) {
+        catalogName = product.name;
+        imageUrl = imageUrl ?? product.imageUrl;
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   if (existingCatalog) {
-    catalogName = existingCatalog.name;
-    imageUrl = existingCatalog.image_url;
+    const oldName = existingCatalog.name;
+    if (!catalogName) catalogName = oldName;
+    if (!imageUrl) imageUrl = existingCatalog.image_url;
+    // Upgrade an unresolved placeholder catalog to a real name when keys exist.
+    if (/^Product\s+\d+$/.test(catalogName ?? "")) {
+      await tryResolveFromEbay();
+      if (catalogName && catalogName !== oldName) {
+        await supabase
+          .from("upc_catalog")
+          .update({ name: catalogName })
+          .eq("upc", upc);
+      }
+    }
   } else {
     // Auto-resolve product name by GTIN when eBay is configured.
     if (!catalogName) {
-      const { resolveProductByGtin } = await import("@/lib/ebay/pricing");
-      try {
-        const product = await resolveProductByGtin(upc);
-        if (product?.name) {
-          catalogName = product.name;
-          imageUrl = imageUrl ?? product.imageUrl;
-        }
-      } catch {
-        /* ignore */
-      }
+      await tryResolveFromEbay();
     }
     if (!catalogName) catalogName = `Product ${upc}`;
 
@@ -98,12 +114,24 @@ export async function POST(request: Request) {
 
   const finalCatalog = { upc, name: catalogName, image_url: imageUrl } as Record<string, unknown>;
 
+  // 2. Backfill the user's placeholder rows (`Product <upc>` or the old catalog
+  //    name) to the current catalog name, so unnamed scans keep merging into a
+  //    single row even after the main product name gets resolved/renamed.
+  if (existingCatalog && catalogName && existingCatalog.name !== catalogName) {
+    await supabase
+      .from("items")
+      .update({ name: catalogName })
+      .eq("owner_id", user.id)
+      .eq("upc", upc)
+      .in("name", [existingCatalog.name, `Product ${upc}`]);
+  }
+
   // 2. Find or create the user's item for this UPC + box + name.
   //    Products that share a barcode (e.g. Final Fantasy commander decks) live
-  //    as SEPARATE rows keyed by their name. The item name used here is either
-  //    the caller-provided name or the stable placeholder `Product <upc>`; the
-  //    eBay-resolved name only feeds the shared catalog (display hint), never
-  //    the item name, so decks never get auto-merged.
+  //    as SEPARATE rows keyed by their full name. The item name is the catalog
+  //    "main" name (e.g. `Final Fantasy`) for unnamed scans, or the caller-
+  //    provided name (a deck row like `Final Fantasy: Limit Break`) when the
+  //    scan targets a specific existing row.
   const rawLoc = body?.location_id ? String(body.location_id) : null;
   let locationId: string | null = null;
   if (rawLoc) {
@@ -115,7 +143,7 @@ export async function POST(request: Request) {
       .maybeSingle();
     locationId = loc?.id ?? null;
   }
-  const effectiveName = body?.name ? String(body.name).trim() || `Product ${upc}` : `Product ${upc}`;
+  const effectiveName = body?.name ? String(body.name).trim() : (catalogName ?? `Product ${upc}`);
 
   let itemQuery = supabase
     .from("items")

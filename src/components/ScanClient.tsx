@@ -16,7 +16,8 @@ export function ScanClient() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [locId, setLocId] = useState("");
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
-  const [rowDraft, setRowDraft] = useState("");
+  const [rowEditMain, setRowEditMain] = useState("");
+  const [rowEditSub, setRowEditSub] = useState("");
 
   useEffect(() => {
     fetch("/api/locations")
@@ -29,21 +30,40 @@ export function ScanClient() {
       .catch(() => {});
   }, []);
 
-  function startRowEdit(row: Item) {
-    setEditingRowId(row.id);
-    setRowDraft(row.name);
+  function mainName() {
+    return result?.catalog?.name ?? `Product ${upc.replace(/\D/g, "") || ""}`;
   }
 
-  async function saveRowName(row: Item, name?: string) {
+  function splitSubName(name: string) {
+    const main = mainName();
+    if (name === main) return "";
+    if (name.startsWith(`${main}: `)) return name.slice(main.length + 2);
+    if (name.includes(": ")) return name.split(": ").slice(1).join(": ");
+    return name;
+  }
+
+  function startRowEdit(row: Item) {
+    setEditingRowId(row.id);
+    setRowEditMain(mainName());
+    setRowEditSub(splitSubName(row.name));
+  }
+
+  async function saveRowName(row: Item, opts?: { fromEbay?: boolean }) {
     const code = upc.replace(/\D/g, "") || row.upc?.replace(/\D/g, "") || "";
     if (!code) return;
     setBusy(true);
     setError(null);
     try {
+      const body: Record<string, string> = {
+        upc: code,
+        item_id: row.id,
+        sub_name: rowEditSub.trim(),
+      };
+      if (!opts?.fromEbay) body.product_name = rowEditMain.trim();
       const res = await fetch("/api/scan/name", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ upc: code, item_id: row.id, ...(name ? { name } : {}) }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -267,16 +287,31 @@ export function ScanClient() {
                       <li key={item.id} className="flex items-center justify-between gap-2 py-1.5">
                         <span className="min-w-0 flex-1">
                           {editingRowId === item.id ? (
-                            <input
-                              className="input"
-                              value={rowDraft}
-                              autoFocus
-                              onChange={(e) => setRowDraft(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") saveRowName(item, rowDraft.trim());
-                                if (e.key === "Escape") setEditingRowId(null);
-                              }}
-                            />
+                            <span className="space-y-1">
+                              <span>
+                                <label className="label">Product</label>
+                                <input
+                                  className="input"
+                                  value={rowEditMain}
+                                  onChange={(e) => setRowEditMain(e.target.value)}
+                                  placeholder="e.g. Final Fantasy"
+                                />
+                              </span>
+                              <span>
+                                <label className="label">Sub name (deck)</label>
+                                <input
+                                  className="input"
+                                  value={rowEditSub}
+                                  autoFocus
+                                  onChange={(e) => setRowEditSub(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") saveRowName(item);
+                                    if (e.key === "Escape") setEditingRowId(null);
+                                  }}
+                                  placeholder="e.g. Limit Break"
+                                />
+                              </span>
+                            </span>
                           ) : (
                             <span className="block truncate text-sm">
                               {item.name}
@@ -289,14 +324,14 @@ export function ScanClient() {
                           )}
                         </span>
                         {editingRowId === item.id ? (
-                          <span className="flex shrink-0 gap-1">
+                          <span className="flex shrink-0 flex-col gap-1">
                             <button
                               className="btn btn-ghost px-2 py-0.5 text-xs"
-                              onClick={() => saveRowName(item)}
+                              onClick={() => saveRowName(item, { fromEbay: true })}
                               disabled={busy}
-                              title="Look up the real name on eBay"
+                              title="Look up the product name on eBay"
                             >
-                              eBay
+                              Search eBay
                             </button>
                             <button
                               className="btn btn-ghost px-2 py-0.5 text-xs"
@@ -307,8 +342,8 @@ export function ScanClient() {
                             </button>
                             <button
                               className="btn btn-primary px-2 py-0.5 text-xs"
-                              onClick={() => saveRowName(item, rowDraft.trim())}
-                              disabled={busy || !rowDraft.trim()}
+                              onClick={() => saveRowName(item)}
+                              disabled={busy || (!rowEditMain.trim() && !rowEditSub.trim())}
                             >
                               Save
                             </button>
