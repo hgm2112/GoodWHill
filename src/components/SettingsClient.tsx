@@ -29,7 +29,11 @@ export function SettingsClient({ email }: { email: string }) {
 
   async function connect() {
     setError(null);
-    const res = await fetch("/api/ebay/connect");
+    const res = await fetch("/api/ebay/connect", { redirect: "manual" });
+    if (res.type === "opaqueredirect") {
+      window.location.href = res.headers.get("location") ?? "";
+      return;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setError(data?.error ?? "Couldn't start the eBay login");
