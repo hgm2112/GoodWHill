@@ -4,6 +4,7 @@ import {
   lookupSealedPrice,
   primaryCents,
   resolveProductByGtin,
+  resolveVariantImage,
   getApplicationToken,
 } from "@/lib/ebay/pricing";
 import { ebayConfigured } from "@/lib/ebay/oauth";
@@ -42,9 +43,20 @@ export async function POST(request: Request) {
     const lookup = await lookupSealedPrice({ gtin: upc, query: name });
 
     let product: { name: string; image_url: string | null } | null = null;
+    let catalogImageUrl: string | null = null;
     if (upc) {
       const resolved = await resolveProductByGtin(upc);
-      if (resolved?.name) product = { name: resolved.name, image_url: resolved.imageUrl };
+      catalogImageUrl = resolved?.imageUrl ?? null;
+      // Deck variants (shared barcode) get their own box art by name; the
+      // shared catalog keeps the generic pack image.
+      const imageUrl = name
+        ? ((await resolveVariantImage(name).catch(() => null)) ?? catalogImageUrl)
+        : catalogImageUrl;
+      if (resolved?.name) {
+        product = { name: resolved.name, image_url: imageUrl };
+      } else if (name && imageUrl) {
+        product = { name, image_url: imageUrl };
+      }
     }
 
     if (upc) {
@@ -52,7 +64,7 @@ export async function POST(request: Request) {
         {
           upc,
           name: product?.name ?? name ?? `Product ${upc}`,
-          image_url: product?.image_url ?? null,
+          image_url: catalogImageUrl,
           ebay_avg_value_cents: lookup.averageCents,
           ebay_median_value_cents: lookup.medianCents,
           price_source: lookup.source === "none" ? null : lookup.source,

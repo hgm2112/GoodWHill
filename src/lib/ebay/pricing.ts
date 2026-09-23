@@ -180,10 +180,16 @@ function isConditionClean(title: string): boolean {
   return !CONDITION_BLACKLIST.some((w) => t.includes(w));
 }
 
+export interface BrowseEntry {
+  title: string;
+  cents: number;
+  image: string | null;
+}
+
 async function browseSearch(params: {
   q?: string | null;
   gtin?: string | null;
-}): Promise<Array<{ title: string; cents: number }>> {
+}): Promise<BrowseEntry[]> {
   const token = await getApplicationToken();
   const url = new URL(`${EBAY_PATHS.api}/buy/browse/v1/item_summary/search`);
   if (params.q) url.searchParams.set("q", params.q);
@@ -201,13 +207,23 @@ async function browseSearch(params: {
   if (!res.ok) return [];
 
   const body = (await res.json()) as { itemSummaries?: unknown[] };
-  const out: Array<{ title: string; cents: number }> = [];
+  const out: BrowseEntry[] = [];
   for (const entry of body.itemSummaries ?? []) {
     const rec = entry as Record<string, unknown>;
     const title = rec.title;
     if (typeof title !== "string") continue;
     const cents = extractPriceCents(rec.price);
-    if (cents != null && cents > 0) out.push({ title, cents });
+    if (cents != null && cents > 0) {
+      const primary = (rec.image as Record<string, unknown> | undefined)?.imageUrl as
+        | string
+        | undefined;
+      const thumb = (
+        (rec.thumbnailImages as Array<Record<string, unknown>> | undefined)?.[0] as
+          | Record<string, unknown>
+          | undefined
+      )?.imageUrl as string | undefined;
+      out.push({ title, cents, image: primary ?? thumb ?? null });
+    }
   }
   return out;
 }
@@ -220,15 +236,33 @@ interface BrowseStats {
 
 const NO_STATS: BrowseStats = { averageCents: null, medianCents: null, count: 0 };
 
-function toStats(entries: Array<{ title: string; cents: number }>): BrowseStats {
+function toStats(entries: BrowseEntry[]): BrowseStats {
   const s = stats(entries.map((e) => e.cents));
   return s ? { averageCents: s.mean, medianCents: s.median, count: s.count } : NO_STATS;
 }
 
 /** Keep only listings that match the product name and are NIB/condition-clean. */
-function keepMatching(entries: Array<{ title: string; cents: number }>, name: string) {
+function keepMatching(entries: BrowseEntry[], name: string) {
   const tokens = requiredTokens(name);
   return entries.filter((e) => titleMatches(tokens, e.title) && isConditionClean(e.title));
+}
+
+/** True when a name carries a "Set: Variant" style sub-name (shared barcodes). */
+export function nameHasVariant(name: string): boolean {
+  return Boolean(splitVariant(name).variant);
+}
+
+/**
+ * Box art for a deck variant ("Set: Variant" names) from a matching,
+ * condition-clean listing. Returns null when the name has no variant or
+ * nothing credible matches.
+ */
+export async function resolveVariantImage(name: string): Promise<string | null> {
+  if (!nameHasVariant(name)) return null;
+  const q = name.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
+  if (!q) return null;
+  const entries = await browseSearch({ q, gtin: null });
+  return keepMatching(entries, name)[0]?.image ?? null;
 }
 
 /**

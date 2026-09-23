@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { ArtworkThumb } from "@/components/ArtworkThumb";
 import { ItemForm } from "@/components/ItemForm";
 import { centsToUsd, downloadTextFile, kindLabel, pluralize, truncated, toCsv } from "@/lib/utils";
 import type { Item, ItemKind, Location } from "@/lib/types";
@@ -498,8 +499,7 @@ function ItemRow({
     <div className="flex items-start gap-3 px-3 py-2.5 transition hover:bg-slate-50 sm:items-center">
       <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md border border-slate-150 bg-slate-100">
         {item.image_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={item.image_url} alt="" className="h-full w-full object-cover" />
+          <ArtworkThumb src={item.image_url} alt={item.name} className="h-full w-full" />
         ) : (
           <div className="flex h-full items-center justify-center text-xs font-bold text-slate-300">
             {item.kind === "sealed" ? "SE" : item.kind === "bulk_cards" ? "TCG" : "OT"}

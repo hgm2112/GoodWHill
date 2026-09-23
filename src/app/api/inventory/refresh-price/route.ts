@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
-import { lookupSealedPrice, primaryCents, resolveProductByGtin } from "@/lib/ebay/pricing";
+import { lookupSealedPrice, primaryCents, resolveProductByGtin, resolveVariantImage, nameHasVariant } from "@/lib/ebay/pricing";
 import { ebayConfigured } from "@/lib/ebay/oauth";
 import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 
@@ -53,12 +53,16 @@ export async function POST(request: Request) {
     update.price_source = lookup.source === "none" ? "manual" : lookup.source;
     update.price_sample_count = lookup.count;
 
-    // Best-effort product resolution to backfill an empty name/image.
+    // Best-effort product resolution to backfill an empty name/image. Deck
+    // variants (shared barcode) get their own box art by name.
+    if (!item.image_url && nameHasVariant(item.name)) {
+      update.image_url = (await resolveVariantImage(item.name).catch(() => null)) ?? null;
+    }
     if (!item.name || !item.image_url) {
       const product = await resolveProductByGtin(gtin);
       if (product?.name && product.name !== item.name) {
         if (!item.name) update.name = product.name;
-        if (!item.image_url && product.imageUrl) update.image_url = product.imageUrl;
+        if (!item.image_url && product.imageUrl) update.image_url = update.image_url ?? product.imageUrl;
       }
     }
   } else if (item.kind === "bulk_cards") {

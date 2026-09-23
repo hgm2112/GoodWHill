@@ -134,9 +134,11 @@ Copy `.env.local.example` → `.env.local`. Keys:
   `q` keyword search on the name, filtered to listings whose titles carry the
   variant tokens and are condition-clean (no playmat/opened/promo/etc.).
   Returns no price (`source: none`) rather than cross-variant listings when
-  nothing credible matches. Results are cached in `upc_catalog` / `items`
-  (`ebay_avg_value_cents`, `ebay_median_value_cents`, `price_source`,
-  `price_sample_count`, `price_checked_at`).
+  nothing credible matches. `resolveVariantImage(name)` fetches the matching
+  listing's box art for deck variants; the item carries that art while the
+  shared UPC catalog keeps the generic pack image. Results are cached in
+  `upc_catalog` / `items` (`ebay_avg_value_cents`, `ebay_median_value_cents`,
+  `price_source`, `price_sample_count`, `price_checked_at`).
 - Own listings sync: `src/lib/ebay/listings.ts` `syncEbaysListings(userId)`
   uses the legacy Trading API `GetMyeBaySelling` (ActiveList) — the app is a
   legacy-granted app whose accounts list via the classic/website flow, so the

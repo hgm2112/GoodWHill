@@ -176,6 +176,20 @@ export async function POST(request: Request) {
 
   if (!item) {
     const setCode = body?.set_code ? String(body.set_code).toUpperCase().slice(0, 12) : null;
+    // Deck variants (shared barcode) get their own box art by name — the item
+    // carries it while the shared catalog keeps the generic pack image.
+    let itemImageUrl = imageUrl;
+    const providedName = body?.name ? String(body.name).trim() : null;
+    if (providedName) {
+      try {
+        const { nameHasVariant, resolveVariantImage } = await import("@/lib/ebay/pricing");
+        if (nameHasVariant(providedName)) {
+          itemImageUrl = (await resolveVariantImage(providedName)) ?? imageUrl;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     const { data: created, error } = await supabase
       .from("items")
       .insert({
@@ -184,7 +198,7 @@ export async function POST(request: Request) {
         kind: "sealed",
         upc,
         set_code: setCode,
-        image_url: imageUrl,
+        image_url: itemImageUrl,
         location_id: locationId,
         quantity: 0,
         active: true,

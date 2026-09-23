@@ -79,6 +79,18 @@ export async function POST(request: Request) {
   const subName = body?.sub_name ? String(body.sub_name).trim() : null;
   const fullName = subName ? `${productName}: ${subName}` : productName;
 
+  // Deck variants (shared barcode) get their own box art by name; the item
+  // carries it while the shared catalog keeps the generic pack image.
+  let variantImage: string | null = null;
+  if (subName) {
+    try {
+      const { resolveVariantImage } = await import("@/lib/ebay/pricing");
+      variantImage = await resolveVariantImage(fullName);
+    } catch {
+      /* ignore */
+    }
+  }
+
   // Update the shared catalog when the main name changed.
   const catalogNameChanged = !catalog?.name || catalog.name !== productName;
   if (catalogNameChanged) {
@@ -119,7 +131,7 @@ export async function POST(request: Request) {
   }
 
   const patch: Record<string, unknown> = { name: fullName };
-  const resolvedImage = imageUrl ?? (catalogNameChanged ? catalog?.image_url : null);
+  const resolvedImage = variantImage ?? imageUrl ?? (catalogNameChanged ? catalog?.image_url : null);
   if (resolvedImage && !item.image_url) patch.image_url = resolvedImage;
   const { data: updated, error: updateError } = await supabase
     .from("items")
