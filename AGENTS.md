@@ -94,6 +94,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     (`releaseAllocations` in the route).
   - Quantity changes always create an `item_movements` row (reasons: add,
     remove, sale, reserve, release, adjust, import, return).
+  - `POST /api/scan/name` names a scanned UPC: accepts a manual `name`, else
+    resolves from eBay by GTIN, then writes the shared `upc_catalog` AND
+    renames every item the current user has for that UPC.
 
 ## eBay integration
 

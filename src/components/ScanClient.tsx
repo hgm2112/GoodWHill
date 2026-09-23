@@ -15,6 +15,9 @@ export function ScanClient() {
   const [history, setHistory] = useState<Array<{ upc: string; at: string; added?: number }>>([]);
   const [locations, setLocations] = useState<Location[]>([]);
   const [locId, setLocId] = useState("");
+  const [editingName, setEditingName] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [ebayConfigured, setEbayConfigured] = useState(false);
 
   useEffect(() => {
     fetch("/api/locations")
@@ -25,7 +28,46 @@ export function ScanClient() {
         setLocId(data.default_location_id ?? "");
       })
       .catch(() => {});
+    fetch("/api/ebay/status")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => setEbayConfigured(Boolean(data?.configured)))
+      .catch(() => {});
   }, []);
+
+  const isPlaceholder =
+    !result?.catalog?.name || /^Product\s+\d+$/.test(result.catalog.name);
+
+  function startEditName() {
+    setDraftName(result?.catalog?.name ?? `Product ${upc.replace(/\D/g, "")}`);
+    setEditingName(true);
+  }
+
+  async function renameProduct(name?: string) {
+    const code = upc.replace(/\D/g, "");
+    if (!code) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/scan/name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ upc: code, ...(name ? { name } : {}) }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data?.error ?? "Could not save product name");
+        return;
+      }
+      setDraftName(data.catalog?.name ?? "");
+      setEditingName(false);
+      flash(`Saved: ${data.catalog?.name}`);
+      runLookup(code);
+    } catch {
+      setError("Could not save product name");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function setScanLocation(id: string) {
     setLocId(id);
@@ -72,7 +114,12 @@ export function ScanClient() {
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ upc: code.replace(/\D/g, ""), delta: quantity, location_id: locId || null }),
+        body: JSON.stringify({
+          upc: code.replace(/\D/g, ""),
+          delta: quantity,
+          location_id: locId || null,
+          name: draftName.trim() || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -161,11 +208,67 @@ export function ScanClient() {
                       {result.catalog ? "Sealed" : "Unknown"}
                     </div>
                   )}
-                  <div className="min-w-0">
-                    <p className="font-semibold leading-snug">{result.catalog?.name ?? `Product ${upc}`}</p>
+                  <div className="min-w-0 flex-1">
+                    {editingName ? (
+                      <input
+                        className="input w-full"
+                        value={draftName}
+                        autoFocus
+                        onChange={(e) => setDraftName(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") renameProduct(draftName.trim());
+                          if (e.key === "Escape") setEditingName(false);
+                        }}
+                      />
+                    ) : (
+                      <p className="font-semibold leading-snug">
+                        {result.catalog?.name ?? `Product ${upc}`}
+                      </p>
+                    )}
+                    {editingName ? (
+                      <span className="mt-1 flex gap-1">
+                        <button
+                          className="btn btn-ghost px-2 py-0.5 text-xs"
+                          onClick={() => setEditingName(false)}
+                          disabled={busy}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          className="btn btn-primary px-2 py-0.5 text-xs"
+                          onClick={() => renameProduct(draftName.trim())}
+                          disabled={busy || !draftName.trim()}
+                        >
+                          Save
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        className="text-xs text-indigo-600 underline-offset-2 hover:underline"
+                        onClick={startEditName}
+                        title="Edit product name"
+                      >
+                        edit name
+                      </button>
+                    )}
                     <p className="text-xs text-slate-500">UPC {result.catalog?.upc ?? upc}</p>
                     {result.catalog?.set_code && (
                       <p className="text-xs text-slate-500">Set {result.catalog.set_code}</p>
+                    )}
+                    {isPlaceholder && (
+                      <p className="text-xs text-slate-400">
+                        {ebayConfigured ? (
+                          <button
+                            className="text-indigo-600 underline-offset-2 hover:underline"
+                            onClick={() => renameProduct()}
+                            disabled={busy}
+                          >
+                            Find name on eBay
+                          </button>
+                        ) : (
+                          "No eBay keys yet — type a name above, or add keys in Settings to auto-name products."
+                        )}
+                      </p>
                     )}
                     {result.catalog?.ebay_avg_value_cents != null && (
                       <p className="text-xs text-emerald-700">

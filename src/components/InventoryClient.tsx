@@ -117,7 +117,33 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
   }
 
   async function remove(item: Item) {
-    if (!window.confirm(`Delete "${item.name}"? Only items with zero stock can be deleted.`)) return;
+    if (item.quantity > 0) {
+      const ok = window.confirm(
+        `Delete "${item.name}"? Its ${pluralize(item.quantity, "unit")} of stock will be removed too.`,
+      );
+      if (!ok) return;
+      const adj = await fetch("/api/inventory/adjust", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          itemId: item.id,
+          delta: -item.quantity,
+          reason: "remove",
+          note: "Removed with item",
+        }),
+      });
+      const adjData = await adj.json();
+      if (!adj.ok) {
+        flash(adjData?.error ?? "Could not remove stock");
+        return;
+      }
+      const res = await fetch(`/api/inventory/${item.id}`, { method: "DELETE" });
+      const data = await res.json();
+      flash(data?.error ?? "Deleted");
+      load();
+      return;
+    }
+    if (!window.confirm(`Delete "${item.name}"?`)) return;
     const res = await fetch(`/api/inventory/${item.id}`, { method: "DELETE" });
     const data = await res.json();
     flash(data?.error ?? "Deleted");
@@ -551,8 +577,7 @@ function ItemRow({
           <button
             className="btn btn-ghost px-2 py-1 text-xs text-red-600"
             onClick={onDelete}
-            disabled={item.quantity > 0}
-            title={item.quantity > 0 ? "Remove stock first to delete" : "Delete"}
+            title={item.quantity > 0 ? "Delete (removes its stock)" : "Delete"}
           >
             Del
           </button>
