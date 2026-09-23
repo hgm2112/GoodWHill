@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
 import {
   lookupSealedPrice,
+  primaryCents,
   resolveProductByGtin,
   getApplicationToken,
 } from "@/lib/ebay/pricing";
@@ -63,7 +64,7 @@ export async function POST(request: Request) {
     }
 
     return NextResponse.json({
-      estimateCents: lookup.averageCents,
+      estimateCents: primaryCents(lookup),
       medianCents: lookup.medianCents,
       sampleCount: lookup.count,
       source: lookup.source === "none" ? "none" : lookup.source,

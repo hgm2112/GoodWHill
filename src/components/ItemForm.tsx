@@ -87,16 +87,14 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
           if (!name) setName(data.product.name);
           if (!imageUrl && data.product.image_url) setImageUrl(data.product.image_url);
         }
-        const sourceLabel =
-          data.source === "insights"
-            ? "eBay sold average"
-            : data.source === "browse_active"
-              ? "eBay active listings (estimate)"
-              : "none";
         setPriceInfo(
-          data.sampleCount > 0
-            ? `${sourceLabel}: $${(est / 100).toFixed(2)} (${data.sampleCount} samples, ${(data.medianCents / 100).toFixed(2)} median)`
-            : "No prices found on eBay yet — set the value manually. (Tip: apply for Marketplace Insights for sold averages.)",
+          est == null
+            ? "No prices found on eBay yet — set the value manually. (Tip: apply for Marketplace Insights for sold averages.)"
+            : data.source === "insights"
+              ? `eBay sold average: $${(est / 100).toFixed(2)} · ${data.sampleCount} samples, $${(data.medianCents / 100).toFixed(2)} median`
+              : data.source === "browse_active"
+                ? `eBay active listings (estimate): $${(est / 100).toFixed(2)} median · ${data.sampleCount} samples`
+                : "No prices found on eBay yet — set the value manually.",
         );
       } else if (kind === "bulk_cards") {
         if (!name.trim()) {

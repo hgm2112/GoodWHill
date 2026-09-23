@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
-import { lookupSealedPrice, resolveProductByGtin } from "@/lib/ebay/pricing";
+import { lookupSealedPrice, primaryCents, resolveProductByGtin } from "@/lib/ebay/pricing";
 import { ebayConfigured } from "@/lib/ebay/oauth";
 import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 
@@ -46,10 +46,10 @@ export async function POST(request: Request) {
 
     const gtin = item.upc;
     const lookup = await lookupSealedPrice({ gtin, query: item.name });
-    const filledValue = lookup.averageCents ?? lookup.medianCents ?? null;
+    const filledValue = primaryCents(lookup);
 
     update.value_cents = filledValue;
-    update.ebay_avg_value_cents = filledValue;
+    update.ebay_avg_value_cents = lookup.averageCents;
     update.price_source = lookup.source === "none" ? "manual" : lookup.source;
     update.price_sample_count = lookup.count;
 

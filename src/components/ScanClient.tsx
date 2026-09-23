@@ -303,15 +303,27 @@ export function ScanClient() {
                         Decks sharing this barcode stay separate — type the deck&apos;s sub name above.
                       </p>
                     )}
-                    {result.catalog?.ebay_avg_value_cents != null && (
-                      <p className="text-xs text-emerald-700">
-                        eBay {result.catalog.price_source === "insights" ? "sold avg" : "est."}{" "}
-                        {centsToUsd(result.catalog.ebay_avg_value_cents)}
-                        {result.catalog.price_sample_count
-                          ? ` · ${pluralize(result.catalog.price_sample_count, "sample")}`
-                          : ""}
-                      </p>
-                    )}
+                    {result.catalog?.price_source === "browse_active"
+                      ? (result.catalog?.ebay_median_value_cents != null || result.catalog?.ebay_avg_value_cents != null) && (
+                          <p className="text-xs text-emerald-700">
+                            eBay est.{" "}
+                            {centsToUsd(
+                              result.catalog.ebay_median_value_cents ?? result.catalog.ebay_avg_value_cents,
+                            )}
+                            {result.catalog.price_sample_count
+                              ? ` · ${pluralize(result.catalog.price_sample_count, "sample")}`
+                              : ""}
+                          </p>
+                        )
+                      : result.catalog?.ebay_avg_value_cents != null && (
+                          <p className="text-xs text-emerald-700">
+                            eBay {result.catalog.price_source === "insights" ? "sold avg" : "est."}{" "}
+                            {centsToUsd(result.catalog.ebay_avg_value_cents)}
+                            {result.catalog.price_sample_count
+                              ? ` · ${pluralize(result.catalog.price_sample_count, "sample")}`
+                              : ""}
+                          </p>
+                        )}
                   </div>
                 </div>
               </div>

@@ -7,9 +7,10 @@ import { EBAY_PATHS, MARKETPLACE_ID, extractPriceCents } from "@/lib/ebay/oauth"
  *   1. Marketplace Insights API  — real sold items (last 90 days). Restricted:
  *      returns 403 until eBay approves your free access application. When it
  *      works it is the true "average sold".
- *   2. Browse API search by GTIN — mean/median of CURRENT active asking
- *      prices for the exact product. Always works with standard keys; the
- *      estimate is labeled as such.
+ *   2. Browse API search by GTIN — CURRENT active asking prices for the
+ *      exact product. Always works with standard keys; the estimate uses the
+ *      MEDIAN (asking prices are right-skewed and the mean overstates on
+ *      outlier listings) and is labeled as such.
  *
  * Results are cached on the item / upc_catalog by the caller.
  */
@@ -144,6 +145,17 @@ export interface PriceLookup {
   medianCents: number | null;
   count: number;
   source: "insights" | "browse_active" | "none";
+}
+
+/**
+ * The stat to treat as "the price" for a lookup. browse_active asking prices
+ * are noisy/right-skewed, so prefer the robust median there; insights sold
+ * data (and scryfall) keep the mean as the primary value.
+ */
+export function primaryCents(lookup: Pick<PriceLookup, "source" | "averageCents" | "medianCents">): number | null {
+  return lookup.source === "browse_active"
+    ? (lookup.medianCents ?? lookup.averageCents)
+    : (lookup.averageCents ?? lookup.medianCents);
 }
 
 /**
