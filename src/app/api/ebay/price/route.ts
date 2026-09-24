@@ -14,7 +14,8 @@ import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 /**
  * POST /api/ebay/price — eBay price lookup with catalog caching.
  * Body: { upc?, name?, kind }
- *   sealed: Insights sold-data → Browse active (by GTIN), cached on upc_catalog.
+ *   sealed/open: Insights sold-data → Browse active (by GTIN), cached on
+ *     upc_catalog. Opened items are priced on sealed-condition listings.
  *   loose: Scryfall current price (no cache needed).
  * Returns { estimateCents, medianCents, sampleCount, source, checkedAt,
  *           product?: { name, image_url } }.
@@ -29,8 +30,8 @@ export async function POST(request: Request) {
   const name = body?.name ? String(body.name).trim() : null;
   const kind = String(body?.kind ?? "sealed");
 
-  if (kind === "sealed") {
-    if (!upc && !name) return apiError("Provide a UPC (preferred) or name for sealed products");
+  if (kind === "sealed" || kind === "open") {
+    if (!upc && !name) return apiError("Provide a UPC (preferred) or name for sealed/open products");
     if (!ebayConfigured()) {
       return apiError(
         "eBay is not configured yet. Add EBAY_CLIENT_ID/SECRET/RUNAME (+ EBAY_RUNAME redirect) to enable price autofill.",
@@ -106,5 +107,5 @@ export async function POST(request: Request) {
     });
   }
 
-  return apiError("kind must be 'sealed' or 'loose'");
+  return apiError("kind must be 'sealed', 'open', or 'loose'");
 }

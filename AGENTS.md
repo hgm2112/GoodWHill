@@ -141,6 +141,8 @@ Copy `.env.local.example` → `.env.local`. Keys:
   shared UPC catalog keeps the generic pack image. Results are cached in
   `upc_catalog` / `items` (`ebay_avg_value_cents`, `ebay_median_value_cents`,
   `price_source`, `price_sample_count`, `price_checked_at`).
+  `open`-kind items use this same sealed pipeline and ARE priced on
+  sealed-condition listings.
 - Own listings sync: `src/lib/ebay/listings.ts` `syncEbaysListings(userId)`
   uses the legacy Trading API `GetMyeBaySelling` (ActiveList) — the app is a
   legacy-granted app whose accounts list via the classic/website flow, so the

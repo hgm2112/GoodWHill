@@ -49,7 +49,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
     setError(null);
     setPriceInfo(null);
     try {
-      if (kind === "sealed") {
+      if (kind === "sealed" || kind === "open") {
         if (!upc.replace(/\D/g, "") && !name.trim()) {
           setError("Enter a UPC or the item name first so eBay can match the product.");
           return;
@@ -69,7 +69,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         const res = await fetch("/api/ebay/price", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ upc: upc.trim() || null, name: name || null, kind: "sealed" }),
+          body: JSON.stringify({ upc: upc.trim() || null, name: name || null, kind }),
         });
         if (res.status === 409 && (await res.json())?.code === "EBAY_NOT_CONFIGURED") {
           setError(
@@ -145,7 +145,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
     const body = {
       name: name.trim(),
       kind,
-      upc: kind === "sealed" ? upc.trim().replace(/\D/g, "") : upc.trim(),
+      upc: kind === "sealed" || kind === "open" ? upc.trim().replace(/\D/g, "") : upc.trim(),
       set_code: setCode.trim() || null,
       category: category.trim() || null,
       quantity,
@@ -223,7 +223,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         </div>
       )}
 
-      {kind === "sealed" && (
+      {(kind === "sealed" || kind === "open") && (
         <div>
           <label className="label">UPC / barcode</label>
           <div className="flex items-center gap-2">
@@ -270,7 +270,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
           <label className="label">Category</label>
           <input
             className="input"
-            placeholder={kind === "sealed" ? "MTG Sealed" : "Other"}
+            placeholder={kind === "sealed" ? "MTG Sealed" : kind === "open" ? "MTG Opened" : "Other"}
             value={category}
             onChange={(e) => setCategory(e.target.value)}
           />
@@ -299,7 +299,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
       </div>
       <p className="text-xs text-slate-400">
         Value is what the item is worth (market resale) — used for{" "}
-        {kind === "sealed" ? "eBay autofill and " : ""}bundle building. Cost is what you paid.
+        {kind === "sealed" || kind === "open" ? "eBay autofill and " : ""}bundle building. Cost is what you paid.
       </p>
 
       <div>

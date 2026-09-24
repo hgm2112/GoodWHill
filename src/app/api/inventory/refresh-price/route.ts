@@ -6,11 +6,12 @@ import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 
 /**
  * POST /api/inventory/refresh-price — value autofill for one item.
- *   sealed      → eBay Insights (sold) then Browse (active) by UPC; falls
+ *   sealed/open → eBay Insights (sold) then Browse (active) by UPC; falls
  *                 back to a name search for UPC-less products; updates
- *                 name/image from the product if those are empty.
+ *                 name/image from the product if those are empty. Opened items
+ *                 are priced on sealed-condition listings.
  *   loose       → Scryfall current price for the card.
- *   other       → manual only (no-op).
+ *   used/other  → manual only (no-op).
  */
 export async function POST(request: Request) {
   const auth = await authUser();
@@ -33,9 +34,9 @@ export async function POST(request: Request) {
     price_checked_at: new Date().toISOString(),
   };
 
-  if (item.kind === "sealed") {
+  if (item.kind === "sealed" || item.kind === "open") {
     if (!item.upc && !item.name) {
-      return apiError("Sealed items need a UPC or name before eBay can price them", 400);
+      return apiError("Sealed/open items need a UPC or name before eBay can price them", 400);
     }
     if (!ebayConfigured()) {
       return apiError(
@@ -81,7 +82,7 @@ export async function POST(request: Request) {
     update.price_sample_count = 1;
     if (!item.image_url && card.image_uris?.small) update.image_url = card.image_uris.small;
   } else {
-    return apiError("This item kind has no automatic price source; set the value manually.", 400);
+    return apiError(`${item.kind} items have no automatic price source; set the value manually.`, 400);
   }
 
   const { data: updated, error: updateError } = await supabase
