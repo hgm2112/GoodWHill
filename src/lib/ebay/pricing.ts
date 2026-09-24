@@ -269,31 +269,49 @@ function toStats(entries: BrowseEntry[]): BrowseStats {
     : NO_STATS;
 }
 
-/** Title phrases that package several decks/shared-barcode products ("all 4"). */
-const MULTI_PACK_PATTERNS: RegExp[] = [
-  /\bset of\b/,
-  /\ball \d+\b/,
-  /\bx\d+\b/,
-  /\b\d+ deck\b/,
-  /box set/,
-  /\bbundle\b/,
-  /\bcase of\b/,
+/**
+ * Title phrases advertising MULTIPLE units — safe to exclude for every
+ * product ("6x booster pack", "lot of 3", …). `2x2` (Double Masters' set
+ * code) deliberately does not match: both sides of the x need word boundaries.
+ */
+const QUANTITY_PATTERNS: RegExp[] = [
+  /\b\d+\s*x\b/i, // "6x Booster Box", "6 x booster pack"
+  /\bx\s*\d+\b/i, // "x6", "x 6"
+  /\blot of\b/i,
+  /\bset of\b/i,
+  /\ball \d+\b/i,
+  /\bcase of\b/i,
+  /\b\d+\s*decks?\b/i,
 ];
 
-function isNotMultiPack(title: string): boolean {
+/**
+ * Packaging phrases that are wrong ONLY for shared-barcode "Set: Variant"
+ * pools — "bundle"/"box set" are real product names for single-barcode
+ * products (Booster Bundle etc.), so excluding them everywhere would empty
+ * those products' price pools.
+ */
+const VARIANT_MULTI_PATTERNS: RegExp[] = [/box set/i, /\bbundle\b/i];
+
+function matchesAny(title: string, patterns: RegExp[]): boolean {
   const t = title.toLowerCase();
-  return !MULTI_PACK_PATTERNS.some((re) => re.test(t));
+  return patterns.some((re) => re.test(t));
 }
 
-/** Keep only listings that match the product name and are NIB/condition-clean. */
-function keepMatching(entries: BrowseEntry[], name: string) {
-  const tokens = requiredTokens(name);
+/** NIB, single-unit titles (plus variant-pack rules when the name has a variant). */
+function keepClean(entries: BrowseEntry[], name: string) {
+  const variant = nameHasVariant(name);
   return entries.filter(
     (e) =>
-      titleMatches(tokens, e.title) &&
       isConditionClean(e.title) &&
-      (!nameHasVariant(name) || isNotMultiPack(e.title)),
+      !matchesAny(e.title, QUANTITY_PATTERNS) &&
+      (!variant || !matchesAny(e.title, VARIANT_MULTI_PATTERNS)),
   );
+}
+
+/** Keep only listings that are condition/single-unit clean AND match the product name. */
+export function keepMatching(entries: BrowseEntry[], name: string) {
+  const tokens = requiredTokens(name);
+  return keepClean(entries, name).filter((e) => titleMatches(tokens, e.title));
 }
 
 /** True when a name carries a "Set: Variant" style sub-name (shared barcodes). */
@@ -405,9 +423,11 @@ export async function searchActive(opts: {
   if (gtin) {
     const items = await browseSearch({ q: null, gtin });
     const matched = keepMatching(items, query);
-    // UPC is authoritative for single-barcode products; the title filter only
-    // narrows when it agrees (never fall back to cross-variant pricing).
-    const pool = matched.length > 0 ? matched : items;
+    // UPC is authoritative for single-barcode products; the name filter only
+    // narrows when it agrees. When no title carries the name, fall back to
+    // the condition/single-unit-clean GTIN pool — never the raw one, so
+    // multi-unit (6x/lot) and junk-condition titles still don't price.
+    const pool = matched.length > 0 ? matched : keepClean(items, query);
     const s = toStats(pool);
     if (s.averageCents != null) return s;
   }
