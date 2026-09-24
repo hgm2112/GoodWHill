@@ -40,12 +40,7 @@ export async function POST(request: Request, { params }: Params) {
   const generated =
     body && typeof body?.title === "string" && typeof body?.description === "string"
       ? null
-      : (() => {
-          const existing = { name: bundle.name };
-          const targetCents = bundle.target_value_cents;
-          const totalCents = bundle.total_value_cents;
-          return generateListingText({ name: existing.name, targetCents, totalCents, lines });
-        })();
+      : generateListingText({ name: bundle.name, lines });
 
   const title = generated?.title ?? String(body?.title ?? "").trim();
   const description = generated?.description ?? String(body?.description ?? "");

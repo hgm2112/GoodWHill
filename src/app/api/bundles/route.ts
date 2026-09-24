@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       409,
     );
   }
-  const name = nameRaw || `${result.game || "MTG"} Mystery Bundle ~$${(targetCents / 100).toFixed(0)}`;
+  const name = nameRaw || result.game || "MTG";
 
   // ── Persist + allocate ────────────────────────────────────────────────────
   const { data: bundle, error: bundleError } = await supabase

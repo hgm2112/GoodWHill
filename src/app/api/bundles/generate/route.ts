@@ -60,9 +60,6 @@ export async function POST(request: Request) {
     );
   }
 
-  const hasSealed = result.lines.some((l) => l.item.kind === "sealed");
-  const includesBulk = result.lines.some((l) => l.item.kind !== "sealed");
-
   return NextResponse.json({
     targetCents,
     totalCents: result.totalCents,
@@ -73,8 +70,6 @@ export async function POST(request: Request) {
       valueCents: l.valueCents,
       lineTotalCents: l.valueCents * l.quantity,
     })),
-    suggestedName: `${result.game || "MTG"} Mystery Bundle ~$${(targetCents / 100).toFixed(0)}${
-      hasSealed ? " (sealed + bulk)" : includesBulk ? " (bulk cards)" : ""
-    }`,
+    suggestedName: result.game || "MTG",
   });
 }
