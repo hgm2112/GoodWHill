@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
 import { generateBundle } from "@/lib/bundle";
+import { BUNDLE_KINDS, ITEM_KINDS } from "@/lib/utils";
 import type { Item } from "@/lib/types";
+
+const VALID_KINDS = ITEM_KINDS as readonly string[];
 
 /**
  * GET  /api/bundles — list bundles (with item counts).
@@ -41,8 +44,8 @@ export async function POST(request: Request) {
   const nameRaw = String(body?.name ?? "").trim();
   const kindsRaw = Array.isArray(body?.kinds)
     ? (body.kinds as unknown[]).map(String)
-    : ["sealed", "bulk_cards"];
-  const kinds = kindsRaw.filter((k) => ["sealed", "bulk_cards", "other"].includes(k));
+    : [...BUNDLE_KINDS];
+  const kinds = kindsRaw.filter((k) => VALID_KINDS.includes(k));
 
   const { data: items, error } = await supabase
     .from("items")

@@ -4,12 +4,46 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { ArtworkThumb } from "@/components/ArtworkThumb";
 import { ItemForm } from "@/components/ItemForm";
-import { centsToUsd, downloadTextFile, kindLabel, pluralize, truncated, toCsv } from "@/lib/utils";
+import {
+  centsToUsd,
+  downloadTextFile,
+  ITEM_KINDS,
+  kindLabel,
+  pluralize,
+  truncated,
+  toCsv,
+} from "@/lib/utils";
 import type { Item, ItemKind, Location } from "@/lib/types";
 
-const KINDS: Array<ItemKind | "all"> = ["all", "sealed", "bulk_cards", "other"];
+const KINDS: Array<ItemKind | "all"> = ["all", ...ITEM_KINDS];
 
 type LocFilter = "all" | "unassigned" | string;
+
+const KEY_DOTS: Array<{ color: string; label: string; title: string }> = [
+  { color: "bg-emerald-500", label: "Browse active", title: "Green = currently active (shown in store/browse)" },
+  { color: "bg-blue-500", label: "Has UPC", title: "Blue = has a barcode; hover the dot to see the code" },
+  { color: "bg-purple-500", label: "Sealed", title: "Purple = sealed product" },
+  { color: "bg-orange-500", label: "Loose", title: "Orange = loose cards/singles" },
+  { color: "bg-amber-400", label: "Open", title: "Amber = opened product" },
+  { color: "bg-slate-400", label: "Used", title: "Gray = used product" },
+  { color: "bg-slate-700", label: "Other", title: "Dark = other stock" },
+];
+
+const KIND_DOT: Record<ItemKind, string> = {
+  sealed: "bg-purple-500",
+  loose: "bg-orange-500",
+  open: "bg-amber-400",
+  used: "bg-slate-400",
+  other: "bg-slate-700",
+};
+
+const KIND_PLACEHOLDER: Record<ItemKind, string> = {
+  sealed: "bg-indigo-100 text-indigo-600",
+  loose: "bg-amber-100 text-amber-700",
+  open: "bg-emerald-100 text-emerald-700",
+  used: "bg-slate-200 text-slate-500",
+  other: "bg-slate-100 text-slate-500",
+};
 
 export function InventoryClient({ initial }: { initial: Item[] }) {
   const [items, setItems] = useState<Item[]>(initial);
@@ -259,7 +293,15 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
 
   return (
     <div>
-      {/* Header actions */}
+      {/* Page header */}
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold">Inventory</h1>
+        <p className="text-sm text-slate-500">
+          Simple view for quick selling · Big pictures · No clutter
+        </p>
+      </div>
+
+      {/* Toolbar */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <input
           className="input max-w-xs flex-1"
@@ -267,7 +309,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        <div className="flex gap-1 rounded-lg border border-slate-200 bg-white p-0.5">
+        <div className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-0.5">
           {KINDS.map((k) => (
             <button
               key={k}
@@ -302,7 +344,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
             checked={showInactive}
             onChange={(e) => setShowInactive(e.target.checked)}
           />
-          Show inactive
+          Show paused
         </label>
         <button className="btn btn-secondary" onClick={() => fileRef.current?.click()}>
           Import CSV
@@ -349,6 +391,18 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         {filtered.length} item{filtered.length === 1 ? "" : "s"} · {summary.units} units ·
         inventory value {centsToUsd(summary.value)} (filtered by current view)
       </p>
+
+      {/* Color key */}
+      <div className="card mb-4">
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-600">
+          {KEY_DOTS.map((d) => (
+            <span key={d.label} className="flex items-center gap-1.5" title={d.title}>
+              <span className={`h-2.5 w-2.5 rounded-full ${d.color}`} />
+              {d.label}
+            </span>
+          ))}
+        </div>
+      </div>
 
       {manageLocations && (
         <div className="card mb-3">
@@ -398,28 +452,29 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-          <ul className="divide-y divide-slate-100">
-            {filtered.map((item) => (
-              <li key={item.id}>
-                <ItemRow
-                  item={item}
-                  locations={locations}
-                  onAssignLocation={(id) => assignLocation(item, id)}
-                  onEdit={() => setEditing(item)}
-                  onAdjust={() => {
-                    setAdjusting(item);
-                    setAdjustDelta(1);
-                  }}
-                  onToggleActive={() => toggleActive(item)}
-                  onDelete={() => remove(item)}
-                  onRefreshPrice={() => refreshPrice(item)}
-                />
-              </li>
-            ))}
-          </ul>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+          {filtered.map((item) => (
+            <ItemCard
+              key={item.id}
+              item={item}
+              locations={locations}
+              onAssignLocation={(id) => assignLocation(item, id)}
+              onEdit={() => setEditing(item)}
+              onAdjust={() => {
+                setAdjusting(item);
+                setAdjustDelta(1);
+              }}
+              onToggleActive={() => toggleActive(item)}
+              onDelete={() => remove(item)}
+              onRefreshPrice={() => refreshPrice(item)}
+            />
+          ))}
         </div>
       )}
+
+      <p className="mt-4 text-center text-xs text-slate-400">
+        Hover the blue dots to see UPC codes · Green = currently active · Colored dots = product type
+      </p>
 
       {toast && (
         <div className="fixed inset-x-4 bottom-16 z-50 rounded-lg bg-slate-900 px-4 py-2.5 text-center text-sm font-medium text-white shadow-xl sm:bottom-6">
@@ -475,7 +530,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
   );
 }
 
-function ItemRow({
+function ItemCard({
   item,
   locations,
   onAssignLocation,
@@ -495,106 +550,159 @@ function ItemRow({
   onRefreshPrice: () => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const { main, sub } = useMemo(() => {
+    const idx = item.name.lastIndexOf(":");
+    if (idx > 0) {
+      const m = item.name.slice(0, idx).trim();
+      const s = item.name.slice(idx + 1).trim();
+      if (s) return { main: m, sub: s };
+    }
+    return { main: item.name, sub: item.notes ?? "" };
+  }, [item.name, item.notes]);
+
   return (
-    <div className="flex items-start gap-3 px-3 py-2.5 transition hover:bg-slate-50 sm:items-center">
-      <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md border border-slate-150 bg-slate-100">
+    <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      {/* Artwork */}
+      <div className="relative aspect-square w-full bg-slate-100">
         {item.image_url ? (
           <ArtworkThumb src={item.image_url} alt={item.name} className="h-full w-full" />
         ) : (
-          <div className="flex h-full items-center justify-center text-xs font-bold text-slate-300">
-            {item.kind === "sealed" ? "SE" : item.kind === "bulk_cards" ? "TCG" : "OT"}
+          <div
+            className={`flex h-full w-full items-center justify-center px-2 text-center text-sm font-semibold ${KIND_PLACEHOLDER[item.kind]}`}
+          >
+            {truncated(item.name, 34)}
+          </div>
+        )}
+
+        <span
+          className={`absolute right-1.5 top-1.5 z-10 rounded-full px-2 py-0.5 text-xs font-bold ${
+            item.quantity === 0 ? "bg-red-600 text-white" : "bg-slate-900/80 text-white"
+          }`}
+          title={`${item.quantity} in stock`}
+        >
+          ×{item.quantity}
+        </span>
+
+        {!item.active && (
+          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-slate-900/70">
+            <span className="text-lg font-black uppercase tracking-widest text-red-400">Paused</span>
           </div>
         )}
       </div>
 
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className={`truncate text-sm font-semibold ${item.active ? "" : "text-slate-400 line-through"}`}>
-            {truncated(item.name, 60)}
-          </span>
-          <span className="badge badge-slate">{kindLabel(item.kind)}</span>
-          {item.upc && <span className="badge badge-indigo">{item.upc}</span>}
-          {item.set_code && <span className="badge badge-amber">{item.set_code}</span>}
-          {item.price_source && <span className="badge badge-green">{item.price_source.replace("_", " ")}</span>}
-          {item.location_id && (
-            <span className="badge badge-purple">
-              {locations.find((l) => l.id === item.location_id)?.name ?? "?"}
-            </span>
+      {/* Actions */}
+      <div className="flex items-center justify-center gap-0.5 border-b border-slate-100">
+        <IconBtn title="Edit" onClick={onEdit}>
+          <IconPath d="M12 20h9" />
+          <IconPath d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z" />
+        </IconBtn>
+        <IconBtn title="Adjust stock" onClick={onAdjust}>
+          <IconPath d="M12 5v14" />
+          <IconPath d="M5 12h14" />
+        </IconBtn>
+        <IconBtn title={item.active ? "Pause" : "Resume"} onClick={onToggleActive}>
+          {item.active ? (
+            <>
+              <IconPath d="M9 6v12" />
+              <IconPath d="M15 6v12" />
+            </>
+          ) : (
+            <IconPath d="M6 5l12 7-12 7Z" />
           )}
-        </div>
-        {item.notes && <p className="mt-0.5 truncate text-xs text-slate-400">{item.notes}</p>}
-        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-          <span className={item.quantity === 0 ? "font-bold text-red-600" : "font-bold"}>
-            {pluralize(item.quantity, "unit")}
-          </span>
-          <span>
-            value {centsToUsd(item.value_cents)}
-            <button
-              className="ml-1 text-indigo-600 underline-offset-2 hover:underline"
-              onClick={async () => {
-                setBusy(true);
-                try {
-                  await onRefreshPrice();
-                } finally {
-                  setBusy(false);
-                }
-              }}
-              title="Refresh price"
-            >
-              {busy ? "pricing…" : "refresh"}
-            </button>
-          </span>
-          {item.unit_cost_cents != null && <span>cost {centsToUsd(item.unit_cost_cents)}</span>}
-          {item.price_checked_at && (
-            <span className="hidden lg:inline">checked {item.price_checked_at.slice(0, 10)}</span>
-          )}
-        </div>
+        </IconBtn>
+        <IconBtn title="Refresh price" spin={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            await onRefreshPrice();
+          } finally {
+            setBusy(false);
+          }
+        }}>
+          <IconPath d="M23 4v6h-6" />
+          <IconPath d="M1 20v-6h6" />
+          <IconPath d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
+          <IconPath d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+        </IconBtn>
+        <IconBtn title="Delete" onClick={onDelete}>
+          <IconPath d="M3 6h18" />
+          <IconPath d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          <IconPath d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+        </IconBtn>
       </div>
 
-      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center">
-        <select
-          className="input max-w-36 px-2 py-1 text-xs"
-          value={item.location_id ?? ""}
-          onChange={(e) => onAssignLocation(e.target.value)}
-          title="Storage location"
-        >
-          <option value="">Unassigned</option>
-          {locations.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <div className="flex items-center gap-1">
-          <IconBtn title="Add stock" onClick={onAdjust} label="+" />
-          <IconBtn title="Remove stock" onClick={onAdjust} label="−" />
-          <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onEdit}>
-            Edit
-          </button>
-          <button className="btn btn-ghost px-2 py-1 text-xs" onClick={onToggleActive}>
-            {item.active ? "Pause" : "Resume"}
-          </button>
-          <button
-            className="btn btn-ghost px-2 py-1 text-xs text-red-600"
-            onClick={onDelete}
-            title={item.quantity > 0 ? "Delete (removes its stock)" : "Delete"}
+      {/* Body */}
+      <div className="flex flex-1 flex-col px-3 pb-3 pt-1.5">
+        <div className={`truncate text-sm font-semibold ${item.active ? "" : "text-slate-400"}`} title={item.name}>
+          {truncated(main, 44)}
+        </div>
+        {sub && (
+          <div className="truncate text-xs text-slate-400" title={sub}>
+            {sub}
+          </div>
+        )}
+
+        <div className="mt-auto pt-1">
+          <div className="text-lg font-bold text-emerald-600">{centsToUsd(item.value_cents)}</div>
+          {item.unit_cost_cents != null && (
+            <div className="text-xs text-slate-400">cost {centsToUsd(item.unit_cost_cents)}</div>
+          )}
+        </div>
+
+        <div className="mt-1.5 flex items-center justify-between gap-1">
+          <select
+            className="max-w-28 truncate rounded border-none bg-transparent p-0 text-xs font-medium text-slate-500 focus:outline-none focus:text-slate-900"
+            value={item.location_id ?? ""}
+            onChange={(e) => onAssignLocation(e.target.value)}
+            title="Storage location"
           >
-            Del
-          </button>
+            <option value="">Unassigned</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          <span className="flex items-center gap-1.5">
+            {item.active && (
+              <span className="h-2 w-2 rounded-full bg-emerald-500" title="Browse active" />
+            )}
+            {item.upc && (
+              <span className="h-2 w-2 rounded-full bg-blue-500" title={`UPC: ${item.upc}`} />
+            )}
+            <span className={`h-2 w-2 rounded-full ${KIND_DOT[item.kind]}`} title={kindLabel(item.kind)} />
+          </span>
         </div>
       </div>
     </div>
   );
 }
 
-function IconBtn({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+function IconBtn({ title, spin = false, onClick, children }: { title: string; spin?: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
-      className="flex h-7 w-7 items-center justify-center rounded-md border border-slate-200 text-slate-500 transition hover:bg-slate-100"
+      className="flex h-8 w-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
       title={title}
+      aria-label={title}
       onClick={onClick}
     >
-      {label}
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="15"
+        height="15"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={spin ? "animate-spin" : undefined}
+      >
+        {children}
+      </svg>
     </button>
   );
+}
+
+function IconPath({ d }: { d: string }) {
+  return <path d={d} />;
 }

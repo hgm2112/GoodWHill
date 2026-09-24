@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
-import { lookupSealedPrice, primaryCents, resolveProductByGtin, resolveVariantImage, nameHasVariant } from "@/lib/ebay/pricing";
+import { lookupSealedPrice, primaryCents, resolveNameImage, resolveProductByGtin, resolveVariantImage, nameHasVariant } from "@/lib/ebay/pricing";
 import { ebayConfigured } from "@/lib/ebay/oauth";
 import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 
 /**
  * POST /api/inventory/refresh-price — value autofill for one item.
- *   sealed      → eBay Insights (sold) then Browse (active) by UPC; updates
+ *   sealed      → eBay Insights (sold) then Browse (active) by UPC; falls
+ *                 back to a name search for UPC-less products; updates
  *                 name/image from the product if those are empty.
- *   bulk_cards  → Scryfall current price for the card.
+ *   loose       → Scryfall current price for the card.
  *   other       → manual only (no-op).
  */
 export async function POST(request: Request) {
@@ -33,8 +34,8 @@ export async function POST(request: Request) {
   };
 
   if (item.kind === "sealed") {
-    if (!item.upc) {
-      return apiError("Sealed items need a UPC before eBay can price them", 400);
+    if (!item.upc && !item.name) {
+      return apiError("Sealed items need a UPC or name before eBay can price them", 400);
     }
     if (!ebayConfigured()) {
       return apiError(
@@ -44,29 +45,31 @@ export async function POST(request: Request) {
       );
     }
 
-    const gtin = item.upc;
-    const lookup = await lookupSealedPrice({ gtin, query: item.name });
+    const lookup = await lookupSealedPrice({ gtin: item.upc ?? null, query: item.name });
     const filledValue = primaryCents(lookup);
 
-    update.value_cents = filledValue;
+    if (filledValue != null) update.value_cents = filledValue;
     update.ebay_avg_value_cents = lookup.averageCents;
     update.price_source = lookup.source === "none" ? "manual" : lookup.source;
     update.price_sample_count = lookup.count;
 
-    // Best-effort product resolution to backfill an empty name/image. Deck
-    // variants (shared barcode) get their own box art by name, refreshed
-    // every time so stale UPC-level art heals on refresh.
+    // Box art by name: deck variants (shared barcode) and UPC-less products
+    // can't use the catalog image, so their art comes from a matching
+    // listing — refreshed every time so stale art heals. A failed lookup
+    // keeps whatever art is already there.
     if (nameHasVariant(item.name)) {
-      update.image_url = (await resolveVariantImage(item.name).catch(() => null)) ?? null;
+      update.image_url = (await resolveVariantImage(item.name).catch(() => null)) ?? item.image_url;
+    } else if (!item.upc && item.name) {
+      update.image_url = (await resolveNameImage(item.name).catch(() => null)) ?? item.image_url;
     }
     if (!item.name || !item.image_url) {
-      const product = await resolveProductByGtin(gtin);
+      const product = item.upc ? await resolveProductByGtin(item.upc) : null;
       if (product?.name && product.name !== item.name) {
         if (!item.name) update.name = product.name;
         if (!item.image_url && product.imageUrl) update.image_url = update.image_url ?? product.imageUrl;
       }
     }
-  } else if (item.kind === "bulk_cards") {
+  } else if (item.kind === "loose") {
     const card = await getCardByName(item.name, item.set_code);
     if (!card) {
       return apiError("Could not find this card on Scryfall", 404, { code: "SCRYFAIL" });

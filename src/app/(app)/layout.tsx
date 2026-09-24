@@ -17,7 +17,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     .maybeSingle();
 
   return (
-    <div className="mx-auto max-w-5xl px-3 pb-24 sm:pb-10">
+    <div className="mx-auto max-w-7xl px-3 pb-24 sm:pb-10">
       <Nav email={user.email ?? ""} displayName={profile?.display_name ?? null} />
       <main className="mt-5">{children}</main>
     </div>

@@ -274,16 +274,25 @@ export function nameHasVariant(name: string): boolean {
 }
 
 /**
+ * Box art for a sealed product by name (works for deck variants and UPC-less
+ * products) from a matching, condition-clean listing. Uses the same keyword
+ * match pool as price lookups. Returns null when nothing credible matches.
+ */
+export async function resolveNameImage(name: string): Promise<string | null> {
+  const q = name.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
+  if (!q) return null;
+  const entries = await browseSearch({ q, gtin: null });
+  return keepMatching(entries, name)[0]?.image ?? null;
+}
+
+/**
  * Box art for a deck variant ("Set: Variant" names) from a matching,
  * condition-clean listing. Returns null when the name has no variant or
  * nothing credible matches.
  */
 export async function resolveVariantImage(name: string): Promise<string | null> {
   if (!nameHasVariant(name)) return null;
-  const q = name.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
-  if (!q) return null;
-  const entries = await browseSearch({ q, gtin: null });
-  return keepMatching(entries, name)[0]?.image ?? null;
+  return resolveNameImage(name);
 }
 
 /**

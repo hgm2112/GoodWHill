@@ -3,6 +3,7 @@ import { authUser, apiError } from "@/lib/api-helper";
 import {
   lookupSealedPrice,
   primaryCents,
+  resolveNameImage,
   resolveProductByGtin,
   resolveVariantImage,
   getApplicationToken,
@@ -14,7 +15,7 @@ import { getCardByName, cardUsdCents } from "@/lib/scryfall";
  * POST /api/ebay/price — eBay price lookup with catalog caching.
  * Body: { upc?, name?, kind }
  *   sealed: Insights sold-data → Browse active (by GTIN), cached on upc_catalog.
- *   bulk_cards: Scryfall current price (no cache needed).
+ *   loose: Scryfall current price (no cache needed).
  * Returns { estimateCents, medianCents, sampleCount, source, checkedAt,
  *           product?: { name, image_url } }.
  */
@@ -57,6 +58,12 @@ export async function POST(request: Request) {
       } else if (name && imageUrl) {
         product = { name, image_url: imageUrl };
       }
+    } else if (name) {
+      // UPC-less sealed products still get their box art by name.
+      const imageUrl = await resolveNameImage(name).catch(() => null);
+      if (imageUrl) {
+        product = { name, image_url: imageUrl };
+      }
     }
 
     if (upc) {
@@ -85,7 +92,7 @@ export async function POST(request: Request) {
     });
   }
 
-  if (kind === "bulk_cards") {
+  if (kind === "loose") {
     if (!name) return apiError("Provide a card name");
     const card = await getCardByName(name);
     const cents = card ? cardUsdCents(card) : null;
@@ -99,5 +106,5 @@ export async function POST(request: Request) {
     });
   }
 
-  return apiError("kind must be 'sealed' or 'bulk_cards'");
+  return apiError("kind must be 'sealed' or 'loose'");
 }

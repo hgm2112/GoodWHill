@@ -1,4 +1,4 @@
-export type ItemKind = "sealed" | "bulk_cards" | "other";
+export type ItemKind = "sealed" | "loose" | "open" | "used" | "other";
 export type BundleStatus = "draft" | "allocated" | "listed" | "sold" | "cancelled";
 export type PriceSource = "insights" | "browse_active" | "scryfall" | "manual" | null;
 

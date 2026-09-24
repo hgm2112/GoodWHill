@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
 import { generateBundle } from "@/lib/bundle";
+import { BUNDLE_KINDS, ITEM_KINDS } from "@/lib/utils";
 import type { Item } from "@/lib/types";
+
+const VALID_KINDS = ITEM_KINDS as readonly string[];
 
 /**
  * POST /api/bundles/generate — preview a random bundle (no persistence).
- * Body: { targetCents, kinds?: ["sealed","bulk_cards","other"] }
+ * Body: { targetCents, kinds?: ["sealed","loose",...] }
  * Every call re-randomizes; the client calls this for "Regenerate".
  */
 export async function POST(request: Request) {
@@ -18,8 +21,8 @@ export async function POST(request: Request) {
   if (!targetCents || targetCents < 500) return apiError("targetCents must be >= $5");
   const kindsRaw = Array.isArray(body?.kinds)
     ? (body.kinds as unknown[]).map(String)
-    : ["sealed", "bulk_cards"];
-  const kinds = kindsRaw.filter((k) => ["sealed", "bulk_cards", "other"].includes(k));
+    : [...BUNDLE_KINDS];
+  const kinds = kindsRaw.filter((k) => VALID_KINDS.includes(k));
 
   const { data: items, error } = await supabase
     .from("items")

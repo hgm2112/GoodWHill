@@ -27,7 +27,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [locationId, setLocationId] = useState<string>(initial?.location_id ?? "");
-  const [pickingCard, setPickingCard] = useState(!isEdit && defaultKind === "bulk_cards");
+  const [pickingCard, setPickingCard] = useState(!isEdit && defaultKind === "loose");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,24 +50,26 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
     setPriceInfo(null);
     try {
       if (kind === "sealed") {
-        if (!upc.replace(/\D/g, "")) {
-          setError("Enter a UPC first so eBay can match the product.");
+        if (!upc.replace(/\D/g, "") && !name.trim()) {
+          setError("Enter a UPC or the item name first so eBay can match the product.");
           return;
         }
         // Prefill name/image from the shared catalog (no eBay call needed).
-        const catRes = await fetch(`/api/catalog?upc=${encodeURIComponent(upc.trim())}`);
-        if (catRes.ok) {
-          const cat = await catRes.json();
-          if (cat) {
-            if (!name) setName(cat.name);
-            if (!setCode) setSetCode(cat.set_code ?? "");
-            if (!imageUrl && cat.image_url) setImageUrl(cat.image_url);
+        if (upc.replace(/\D/g, "")) {
+          const catRes = await fetch(`/api/catalog?upc=${encodeURIComponent(upc.trim())}`);
+          if (catRes.ok) {
+            const cat = await catRes.json();
+            if (cat) {
+              if (!name) setName(cat.name);
+              if (!setCode) setSetCode(cat.set_code ?? "");
+              if (!imageUrl && cat.image_url) setImageUrl(cat.image_url);
+            }
           }
         }
         const res = await fetch("/api/ebay/price", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ upc: upc.trim(), name: name || null, kind: "sealed" }),
+          body: JSON.stringify({ upc: upc.trim() || null, name: name || null, kind: "sealed" }),
         });
         if (res.status === 409 && (await res.json())?.code === "EBAY_NOT_CONFIGURED") {
           setError(
@@ -96,7 +98,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
                 ? `eBay active listings (estimate): $${(est / 100).toFixed(2)} median · ${data.sampleCount} samples`
                 : "No prices found on eBay yet — set the value manually.",
         );
-      } else if (kind === "bulk_cards") {
+      } else if (kind === "loose") {
         if (!name.trim()) {
           setError("Enter the card name first.");
           return;
@@ -104,7 +106,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         const res = await fetch("/api/ebay/price", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: name.trim(), kind: "bulk_cards" }),
+          body: JSON.stringify({ name: name.trim(), kind: "loose" }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -177,7 +179,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
               type="button"
               onClick={() => {
                 setKind(k.value as ItemKind);
-                setPickingCard(k.value === "bulk_cards");
+                setPickingCard(k.value === "loose");
               }}
               className={`rounded-lg border px-2 py-2 text-xs font-semibold ${
                 kind === k.value
@@ -191,7 +193,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         </div>
       </div>
 
-      {kind === "bulk_cards" && pickingCard && (
+      {kind === "loose" && pickingCard && (
         <div>
           <label className="label">Search Magic card</label>
           <CardSearchInput onSelect={applyCard} />
@@ -226,7 +228,8 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
             </button>
           </div>
           <p className="mt-1 text-xs text-slate-400">
-            Autofills the product name and an eBay-based value estimate (sold
+            Optional — a product name alone is enough: use the Info &amp; price
+            button and it fetches name, image, and an eBay-based value estimate (sold
             average when Marketplace Insights is approved, otherwise active-listing prices).
           </p>
         </div>
@@ -302,7 +305,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         </p>
       </div>
 
-      {kind === "bulk_cards" && (
+      {kind === "loose" && (
         <button
           type="button"
           className="btn btn-secondary w-full"

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
-import { normalizeName } from "@/lib/utils";
+import { ITEM_KINDS, normalizeName } from "@/lib/utils";
+
+// Union of ITEM_KINDS for `.includes()` checks.
+const VALID_KINDS = ITEM_KINDS as readonly string[];
 
 /** GET /api/inventory?kind=&q=&location_id=&unassigned=&includeInactive= */
 export async function GET(request: Request) {
@@ -50,7 +53,7 @@ export async function POST(request: Request) {
   if (!name) return apiError("Name is required");
 
   const kindRaw = String(body.kind ?? "other");
-  if (!["sealed", "bulk_cards", "other"].includes(kindRaw)) {
+  if (!VALID_KINDS.includes(kindRaw)) {
     return apiError("Invalid kind");
   }
   const upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;

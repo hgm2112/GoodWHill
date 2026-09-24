@@ -113,10 +113,18 @@ export function toCsv(rows: string[][]): string {
 }
 
 const KIND_LABELS: Record<string, string> = {
-  sealed: "Sealed product",
-  bulk_cards: "Bulk loose cards",
+  sealed: "Sealed",
+  loose: "Loose",
+  open: "Open",
+  used: "Used",
   other: "Other",
 };
+
+/** All item kinds, in color-key order. */
+export const ITEM_KINDS = ["sealed", "loose", "open", "used", "other"] as const;
+
+/** Kinds included by default when building bundles. */
+export const BUNDLE_KINDS = ["sealed", "loose"] as const;
 
 export function kindLabel(kind: string): string {
   return KIND_LABELS[kind] ?? kind;

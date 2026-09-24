@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { NumberDollars } from "@/components/ui/Modal";
-import { centsToUsd, kindLabel, truncated } from "@/lib/utils";
+import { centsToUsd, ITEM_KINDS, kindLabel, truncated } from "@/lib/utils";
 import type { Item, ItemKind } from "@/lib/types";
 
 interface PreviewLine {
@@ -25,7 +25,7 @@ const PRESETS = [5000, 10000, 15000, 20000];
 export function BundleBuilder() {
   const router = useRouter();
   const [targetCents, setTargetCents] = useState(10000);
-  const [kinds, setKinds] = useState<ItemKind[]>(["sealed", "bulk_cards"]);
+  const [kinds, setKinds] = useState<ItemKind[]>(["sealed", "loose"]);
   const [name, setName] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
@@ -126,7 +126,7 @@ export function BundleBuilder() {
 
         <label className="label mt-4">Include</label>
         <div className="flex flex-wrap gap-2">
-          {(["sealed", "bulk_cards", "other"] as ItemKind[]).map((k) => (
+          {([...ITEM_KINDS] as ItemKind[]).map((k) => (
             <label key={k} className="flex items-center gap-1.5 text-sm text-slate-600">
               <input
                 type="checkbox"

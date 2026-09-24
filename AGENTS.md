@@ -65,7 +65,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
   - Schema + RLS + triggers in `supabase/migrations/0001_init.sql`. Apply via
     the Supabase SQL editor or `supabase db push`. Keep the migration
     idempotent when adding edits (add new `0002_*.sql` files, don't rewrite
-    0001).
+    0001). Note: `0007_item_kinds_v2.sql` REMAPS the `item_kind` enum to
+    `sealed | loose | open | used | other` (was sealed/bulk_cards/other);
+    apply it before deploying code that sends `loose`.
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
     `value_cents`, cached eBay price columns), `item_movements` (ledger, one

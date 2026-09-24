@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError } from "@/lib/api-helper";
-import { normalizeName } from "@/lib/utils";
+import { ITEM_KINDS, normalizeName } from "@/lib/utils";
+
+const VALID_KINDS = ITEM_KINDS as readonly string[];
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -25,7 +27,7 @@ export async function PATCH(request: Request, { params }: Params) {
   const next: Record<string, unknown> = {};
   if ("name" in body) next.name = String(body.name ?? "").trim() || existing.name;
   if ("kind" in body) {
-    if (!["sealed", "bulk_cards", "other"].includes(String(body.kind))) {
+    if (!VALID_KINDS.includes(String(body.kind))) {
       return apiError("Invalid kind");
     }
     next.kind = body.kind;

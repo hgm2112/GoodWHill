@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getCents } from "@/lib/api-helper";
-import { parseCsv, normalizeName } from "@/lib/utils";
+import { ITEM_KINDS, parseCsv, normalizeName } from "@/lib/utils";
+
+const VALID_KINDS = ITEM_KINDS as readonly string[];
 
 /**
  * POST /api/inventory/import — bulk import from CSV.
@@ -73,7 +75,7 @@ export async function POST(request: Request) {
       continue;
     }
     const kindRaw = get(row, "kind").toLowerCase();
-    const kind = ["sealed", "bulk_cards", "other"].includes(kindRaw) ? kindRaw : "other";
+    const kind = VALID_KINDS.includes(kindRaw) ? kindRaw : "other";
     const upc = get(row, "upc").replace(/\D/g, "").slice(0, 32) || null;
     const quantityRaw = Number.parseInt(get(row, "quantity") || "0", 10);
     const quantity = Number.isFinite(quantityRaw) ? Math.max(0, quantityRaw) : 0;
