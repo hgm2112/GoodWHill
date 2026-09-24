@@ -99,7 +99,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
             : data.source === "insights"
               ? `eBay sold average: $${(est / 100).toFixed(2)} · ${data.sampleCount} samples, $${(data.medianCents / 100).toFixed(2)} median`
               : data.source === "browse_active"
-                ? `eBay active listings (estimate): $${(est / 100).toFixed(2)} median · ${data.sampleCount} samples`
+                ? `eBay active listings (25th pct): $${(est / 100).toFixed(2)} · ${data.sampleCount} samples`
                 : "No prices found on eBay yet — set the value manually.",
         );
       } else if (kind === "loose") {

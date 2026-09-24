@@ -11,11 +11,21 @@ type PriceResult =
   | { ok: false; error: string; status: number; code?: string };
 
 /**
- * Never overwrite a manual value: when an item already has value_cents, drop
- * the price fields from the update (a picture/name fill still applies).
+ * Never overwrite a manual value: drop the price fields from the update when
+ * the item's current value did NOT come from an automatic source (eBay/scryfall
+ * autofill). Auto-sourced values are refreshed in place; a picture/name fill
+ * still always applies.
  */
-function withoutManualValue(update: Record<string, unknown>, valueCents: number | null) {
-  if (valueCents == null) return update;
+function withoutManualValue(
+  update: Record<string, unknown>,
+  item: { value_cents: number | null; price_source: string | null },
+) {
+  if (item.value_cents == null) return update;
+  const auto =
+    item.price_source === "browse_active" ||
+    item.price_source === "insights" ||
+    item.price_source === "scryfall";
+  if (auto) return update;
   const next = { ...update };
   delete next.value_cents;
   delete next.ebay_avg_value_cents;
@@ -32,6 +42,8 @@ function withoutManualValue(update: Record<string, unknown>, valueCents: number 
  *                 are priced on sealed-condition listings.
  *   loose       → Scryfall current price for the card.
  *   used/other  → manual only (error).
+ *   Returns the RAW update — the caller applies withoutManualValue against
+ *   the actual item (the cached bulk path prices several items from one lookup).
  */
 async function priceOne(item: {
   id: string;
@@ -67,15 +79,20 @@ async function priceOne(item: {
     update.price_source = lookup.source === "none" ? "manual" : lookup.source;
     update.price_sample_count = lookup.count;
 
-    // Box art by name: deck variants (shared barcode) and UPC-less products
-    // can't rely on the catalog image, so their art comes from a matching
-    // listing — refreshed every time so stale art heals. The UPC narrows the
-    // search pool to the right product family. A failed lookup either keeps
-    // whatever art is already there.
-    if (nameHasVariant(item.name)) {
-      update.image_url = (await resolveVariantImage(item.name, item.upc).catch(() => null)) ?? item.image_url;
-    } else if (!item.upc && item.name) {
-      update.image_url = (await resolveNameImage(item.name).catch(() => null)) ?? item.image_url;
+    // Box art is fetched only when missing — a refresh never replaces an
+    // image the item already has (and skips the Browse art search entirely
+    // when art is present). Deck variants (shared barcode) and UPC-less
+    // products can't rely on the catalog image, so their art comes from a
+    // matching listing; the UPC narrows the search pool to the right product
+    // family. A failed lookup leaves the item without art for the block below.
+    if (!item.image_url) {
+      if (nameHasVariant(item.name)) {
+        const art = await resolveVariantImage(item.name, item.upc).catch(() => null);
+        if (art) update.image_url = art;
+      } else if (!item.upc && item.name) {
+        const art = await resolveNameImage(item.name).catch(() => null);
+        if (art) update.image_url = art;
+      }
     }
     if (!item.name || !item.image_url) {
       const product = item.upc ? await resolveProductByGtin(item.upc) : null;
@@ -103,7 +120,7 @@ async function priceOne(item: {
     };
   }
 
-  return { ok: true, update: withoutManualValue(update, item.value_cents) };
+  return { ok: true, update };
 }
 
 /**
@@ -112,8 +129,9 @@ async function priceOne(item: {
  *   { scope: "unpriced" } → price every item without a value or picture
  *                           (value_cents null OR image_url null), up to 50,
  *                           sequential with per-item try/catch and per-UPC/name
- *                           dedupe. Manual values are never overwritten.
- *                           Returns { refreshed, failed, skipped, errors[] }.
+ *                           dedupe. Manual values are never overwritten; values
+ *                           that came from eBay/scryfall autofill refresh in
+ *                           place. Returns { refreshed, failed, skipped, errors[] }.
  */
 export async function POST(request: Request) {
   const auth = await authUser();
@@ -125,7 +143,7 @@ export async function POST(request: Request) {
   if (body?.scope === "unpriced") {
     const { data: items, error } = await supabase
       .from("items")
-      .select("id,kind,name,upc,set_code,image_url,value_cents")
+      .select("id,kind,name,upc,set_code,image_url,value_cents,price_source")
       .eq("owner_id", user.id)
       .in("kind", ["sealed", "open", "loose"])
       .or("value_cents.is.null,image_url.is.null")
@@ -140,18 +158,18 @@ export async function POST(request: Request) {
     for (const item of items ?? []) {
       try {
         const cacheKey = `${item.upc ?? ""}|${item.name ?? ""}`;
-        const result: PriceResult = cache.has(cacheKey)
-          ? { ok: true, update: withoutManualValue(cache.get(cacheKey) as Record<string, unknown>, item.value_cents) }
-          : await priceOne(item);
+        const cached = cache.get(cacheKey) as Record<string, unknown> | undefined;
+        const result: PriceResult = cached ? { ok: true, update: cached } : await priceOne(item);
         if (!result.ok) {
           failed++;
           errors.push({ name: item.name, error: result.error });
           continue;
         }
-        if (!cache.has(cacheKey)) cache.set(cacheKey, result.update);
+        if (!cached) cache.set(cacheKey, result.update);
+        const update = withoutManualValue(result.update, item);
         const { error: updateError } = await supabase
           .from("items")
-          .update(result.update)
+          .update(update)
           .eq("id", item.id)
           .eq("owner_id", user.id);
         if (updateError) {
@@ -190,7 +208,7 @@ export async function POST(request: Request) {
 
   const { data: updated, error: updateError } = await supabase
     .from("items")
-    .update(result.update)
+    .update(withoutManualValue(result.update, item))
     .eq("id", itemId)
     .eq("owner_id", user.id)
     .select()

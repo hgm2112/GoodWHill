@@ -11,8 +11,9 @@ import { EBAY_PATHS, MARKETPLACE_ID, extractPriceCents } from "@/lib/ebay/oauth"
  *      single-barcode products; for deck variants (shared pack barcode,
  *      "Set: Variant" names like "Commander Masters: Planeswalker Party")
  *      a keyword search on the name filtered to matching, condition-clean
- *      listings. Estimate uses the MEDIAN (asking prices are right-skewed;
- *      the mean overstates on outlier listings) and is labeled as such.
+ *      listings. Estimate uses the 25th percentile of the IQR-trimmed pool
+ *      (asking prices are right-skewed; even the mean/median overstate on
+ *      outlier listings) and is labeled as such.
  *
  * Results are cached on the item / upc_catalog by the caller.
  */
@@ -48,16 +49,36 @@ export async function getApplicationToken(): Promise<string> {
   return cachedAppToken.token;
 }
 
-function stats(values: number[]) {
+/** Linear-interpolation percentile (Excel PERCENTILE.INC / NumPy default) on a sorted array. */
+function percentile(sorted: number[], q: number): number {
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos);
+  const hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return Math.round(sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo));
+}
+
+/**
+ * Drop Tukey outliers (outside Q1 − 1.5·IQR … Q3 + 1.5·IQR) when the pool is
+ * large enough for the fences to mean anything. Catches both scalper asks
+ * (high) and junk listings — damaged/wrong item, mispriced (low). Falls back
+ * to the raw pool when trimming would gut it.
+ */
+function trimOutliers(sorted: number[]): number[] {
+  if (sorted.length < 5) return sorted;
+  const q1 = percentile(sorted, 0.25);
+  const q3 = percentile(sorted, 0.75);
+  const iqr = q3 - q1;
+  const kept = sorted.filter((v) => v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr);
+  return kept.length >= 3 ? kept : sorted;
+}
+
+/** Price stats over an IQR-trimmed pool: p25 (the estimate), median, mean. */
+export function stats(values: number[]) {
   if (!values.length) return null;
-  const sorted = [...values].sort((a, b) => a - b);
-  const mean = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
-  const mid = Math.floor(sorted.length / 2);
-  const median =
-    sorted.length % 2 !== 0
-      ? sorted[mid]
-      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-  return { median, mean, count: values.length };
+  const kept = trimOutliers([...values].sort((a, b) => a - b));
+  const mean = Math.round(kept.reduce((a, b) => a + b, 0) / kept.length);
+  return { p25: percentile(kept, 0.25), median: percentile(kept, 0.5), mean, count: kept.length };
 }
 
 function collectListValues(list: unknown, key: string): number[] {
@@ -75,6 +96,7 @@ function collectListValues(list: unknown, key: string): number[] {
 export async function searchInsights(query: string): Promise<{
   averageCents: number | null;
   medianCents: number | null;
+  p25Cents: number | null;
   count: number;
   unavailable?: boolean;
 }> {
@@ -93,15 +115,15 @@ export async function searchInsights(query: string): Promise<{
       },
     });
   } catch {
-    return { averageCents: null, medianCents: null, count: 0, unavailable: true };
+    return { averageCents: null, medianCents: null, p25Cents: null, count: 0, unavailable: true };
   }
 
   if (res.status === 403 || res.status === 401) {
     // Insights access not approved yet → caller falls back to Browse.
-    return { averageCents: null, medianCents: null, count: 0, unavailable: true };
+    return { averageCents: null, medianCents: null, p25Cents: null, count: 0, unavailable: true };
   }
   if (!res.ok) {
-    return { averageCents: null, medianCents: null, count: 0, unavailable: true };
+    return { averageCents: null, medianCents: null, p25Cents: null, count: 0, unavailable: true };
   }
 
   const body = (await res.json()) as { itemSales?: unknown[] };
@@ -110,8 +132,8 @@ export async function searchInsights(query: string): Promise<{
     collectListValues(sales, "price"),
   );
   const s = stats(cents);
-  if (!s) return { averageCents: null, medianCents: null, count: 0 };
-  return { averageCents: s.mean, medianCents: s.median, count: s.count };
+  if (!s) return { averageCents: null, medianCents: null, p25Cents: null, count: 0 };
+  return { averageCents: s.mean, medianCents: s.median, p25Cents: s.p25, count: s.count };
 }
 
 /** Filler words in a product name that shouldn't be required in listing titles. */
@@ -234,14 +256,17 @@ async function browseSearch(params: {
 interface BrowseStats {
   averageCents: number | null;
   medianCents: number | null;
+  p25Cents: number | null;
   count: number;
 }
 
-const NO_STATS: BrowseStats = { averageCents: null, medianCents: null, count: 0 };
+const NO_STATS: BrowseStats = { averageCents: null, medianCents: null, p25Cents: null, count: 0 };
 
 function toStats(entries: BrowseEntry[]): BrowseStats {
   const s = stats(entries.map((e) => e.cents));
-  return s ? { averageCents: s.mean, medianCents: s.median, count: s.count } : NO_STATS;
+  return s
+    ? { averageCents: s.mean, medianCents: s.median, p25Cents: s.p25, count: s.count }
+    : NO_STATS;
 }
 
 /** Title phrases that package several decks/shared-barcode products ("all 4"). */
@@ -397,19 +422,21 @@ export async function searchActive(opts: {
 export interface PriceLookup {
   averageCents: number | null;
   medianCents: number | null;
+  p25Cents: number | null;
   count: number;
   source: "insights" | "browse_active" | "none";
 }
 
 /**
- * The stat to treat as "the price" for a lookup. browse_active asking prices
- * are noisy/right-skewed, so prefer the robust median there; insights sold
- * data (and scryfall) keep the mean as the primary value.
+ * The stat to treat as "the price" for a lookup: the 25th percentile of the
+ * (IQR-trimmed) observed prices — conservative for right-skewed active asking
+ * prices, and still the right pick for sold data if Insights comes online.
+ * Falls back to median, then mean.
  */
-export function primaryCents(lookup: Pick<PriceLookup, "source" | "averageCents" | "medianCents">): number | null {
-  return lookup.source === "browse_active"
-    ? (lookup.medianCents ?? lookup.averageCents)
-    : (lookup.averageCents ?? lookup.medianCents);
+export function primaryCents(
+  lookup: Pick<PriceLookup, "p25Cents" | "medianCents" | "averageCents">,
+): number | null {
+  return lookup.p25Cents ?? lookup.medianCents ?? lookup.averageCents;
 }
 
 /**
@@ -431,6 +458,7 @@ export async function lookupSealedPrice(opts: {
       return {
         averageCents: insights.averageCents,
         medianCents: insights.medianCents,
+        p25Cents: insights.p25Cents,
         count: insights.count,
         source: "insights",
       };
@@ -442,12 +470,13 @@ export async function lookupSealedPrice(opts: {
     return {
       averageCents: browse.averageCents,
       medianCents: browse.medianCents,
+      p25Cents: browse.p25Cents,
       count: browse.count,
       source: "browse_active",
     };
   }
 
-  return { averageCents: null, medianCents: null, count: 0, source: "none" };
+  return { averageCents: null, medianCents: null, p25Cents: null, count: 0, source: "none" };
 }
 
 /** Resolve a GTIN/UPC to a product name + image (best effort). */

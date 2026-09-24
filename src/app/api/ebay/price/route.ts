@@ -74,7 +74,9 @@ export async function POST(request: Request) {
           name: product?.name ?? name ?? `Product ${upc}`,
           image_url: catalogImageUrl,
           ebay_avg_value_cents: lookup.averageCents,
-          ebay_median_value_cents: lookup.medianCents,
+          // Legacy column name: holds the p25 estimate (what the scan chip
+          // and refresh-price treat as "the value"), not the median.
+          ebay_median_value_cents: lookup.p25Cents ?? lookup.medianCents,
           price_source: lookup.source === "none" ? null : lookup.source,
           price_sample_count: lookup.count || null,
           price_checked_at: new Date().toISOString(),

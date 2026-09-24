@@ -203,13 +203,15 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ itemId: item.id }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
         flash(data?.error ?? "Refresh failed");
       } else {
-        flash(`Value updated: ${centsToUsd(data.value_cents)}`);
+        flash(`Value updated: ${centsToUsd(data?.value_cents ?? null)}`);
       }
       load();
+    } catch {
+      flash("Refresh failed — check your connection");
     } finally {
       setBusy(false);
     }

@@ -137,8 +137,10 @@ Copy `.env.local.example` → `.env.local`. Keys:
   `lookupSealedPrice(upc, name?)` tries the Marketplace Insights
   `/buy/marketplace_insights/v1_beta/item_sales/search` (real 90-day sold
   data; restricted, errors until free access is approved) and falls back to
-  `searchActive`: Browse API active-listing prices, estimated by the MEDIAN
-  (asking prices are right-skewed). Single-barcode products are matched
+  `searchActive`: Browse API active-listing prices, estimated by the 25th
+  percentile of the IQR-trimmed pool (`stats()` drops Tukey outliers —
+  scalper asks high, junk listings low; asking prices are right-skewed).
+  Single-barcode products are matched
   exactly by GTIN; deck variants (`"Set: Variant"` names — the shared-pack
   UPC cannot distinguish them, e.g. Commander Masters decks) are priced by a
   GTIN search narrowed by the variant tokens (falling back to a `q` keyword
@@ -150,6 +152,8 @@ Copy `.env.local.example` → `.env.local`. Keys:
   shared UPC catalog keeps the generic pack image. Results are cached in
   `upc_catalog` / `items` (`ebay_avg_value_cents`, `ebay_median_value_cents`,
   `price_source`, `price_sample_count`, `price_checked_at`).
+  `ebay_median_value_cents` is a legacy name — it stores the **p25**
+  estimate (the value that `primaryCents` returns), not the median.
   `open`-kind items use this same sealed pipeline and ARE priced on
   sealed-condition listings.
   Name-based matching (`requiredTokens`/`titleMatches`/`keepMatching`) is

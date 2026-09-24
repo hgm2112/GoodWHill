@@ -125,8 +125,11 @@ app deploy-ready (typecheck/lint green, pushed to `origin/main`).
   Scryfall; `used`/`other` are manual-only.
 - Bulk refresh dedupe key = `upc|name`; item rows share a UPC+name merge
   smoothly; `normalizeName` (lower/trim) is the duplicate-compare convention.
-- Money: cents on the wire/DB; `primaryCents` = median for `browse_active`,
-  mean for insights/scryfall. `price_checked_at` is set on every refresh even
+- Money: cents on the wire/DB; `primaryCents` = p25 (25th pct of the
+  IQR-trimmed pool) with median/mean fallback, every source.
+  `withoutManualValue` protects only null/`manual` price_source — auto
+  (browse_active/insights/scryfall) values refresh in place on row refresh.
+  `price_checked_at` is set on every refresh even
   when no value is found (source `manual`).
 - Marketplace Insights still 403 → auto fallback to `browse_active`.
 - Script env pattern (Node 20): `supabase-js createClient` fails (no native
