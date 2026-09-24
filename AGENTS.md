@@ -188,6 +188,11 @@ Copy `.env.local.example` → `.env.local`. Keys:
 
 ## Gotchas
 
+- **Never run `npm run build` while `npm run dev` is running** — both share
+  `.next/`, and a production build clobbers the dev server's cache/manifests,
+  which breaks every dynamic `[id]` API route with a bare 500 until the dev
+  server is restarted. Run typecheck/lint during dev; run `build` only when the
+  dev server is stopped (or on CI/Vercel).
 - `cookies()`/`supabase.auth` in Server Components make pages dynamic — build
   succeeds but pages render on request. Don't try to statically prerender user
   data.
@@ -198,3 +203,7 @@ Copy `.env.local.example` → `.env.local`. Keys:
   accounting (see API conventions).
 - Never store secrets in the repo. `.env.local` is gitignored; tokens are
   encrypted with `EBAY_TOKEN_ENCRYPTION_KEY`.
+- Client fetch calls `res.json()` can throw on non-JSON error bodies (bare 500s,
+  proxies) — parse defensively (`res.json().catch(() => null)`) and always wrap
+  the flow in try/catch/finally so failures surface as a visible error instead
+  of a silent no-op.`

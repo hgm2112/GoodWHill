@@ -82,7 +82,11 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
           setError(body?.error ?? "Price lookup failed.");
           return;
         }
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
+        if (!data) {
+          setError("Price lookup failed — the server returned an unexpected response.");
+          return;
+        }
         const est = data.estimateCents ?? data.medianCents;
         if (est != null) setValue(est);
         if (data.product) {
@@ -113,7 +117,11 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
           setError(body?.error ?? "Price lookup failed.");
           return;
         }
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
+        if (!data) {
+          setError("Price lookup failed — the server returned an unexpected response.");
+          return;
+        }
         if (data.estimateCents != null) setValue(data.estimateCents);
         setPriceInfo(
           data.estimateCents != null
@@ -123,6 +131,8 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
       } else {
         setError("Manual items don't have an autofill source.");
       }
+    } catch {
+      setError("Price lookup failed — check your connection and try again.");
     } finally {
       setBusy(false);
     }
@@ -157,12 +167,18 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error ?? "Save failed");
+        setError(data?.error ?? `Save failed — the server returned ${res.status}.`);
+        return;
+      }
+      if (!data) {
+        setError("Save failed — the server returned an empty response.");
         return;
       }
       onSaved(data);
+    } catch {
+      setError("Save failed — check your connection and try again.");
     } finally {
       setBusy(false);
     }
