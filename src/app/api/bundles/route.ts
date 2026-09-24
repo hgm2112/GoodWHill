@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
-import { generateBundle } from "@/lib/bundle";
+import { buildBundleAcrossGames, type GameBundleResult } from "@/lib/bundle";
 import { BUNDLE_KINDS, ITEM_KINDS } from "@/lib/utils";
 import type { Item } from "@/lib/types";
 
@@ -9,7 +9,7 @@ const VALID_KINDS = ITEM_KINDS as readonly string[];
 /**
  * GET  /api/bundles — list bundles (with item counts).
  * POST /api/bundles — generate, persist, and ALLOCATE stock for a bundle.
- *   Body: { name, targetCents, kinds }
+ *   Body: { name, targetCents, kinds, game? }
  */
 export async function GET() {
   const auth = await authUser();
@@ -46,6 +46,7 @@ export async function POST(request: Request) {
     ? (body.kinds as unknown[]).map(String)
     : [...BUNDLE_KINDS];
   const kinds = kindsRaw.filter((k) => VALID_KINDS.includes(k));
+  const game = body?.game != null ? String(body.game).trim() : null;
 
   const { data: items, error } = await supabase
     .from("items")
@@ -59,9 +60,21 @@ export async function POST(request: Request) {
   if (error) return apiError(error.message, 500, { code: "DB" });
   if (!items?.length) return apiError("No priced in-stock items available", 409);
 
-  const result = generateBundle(items as Item[], targetCents, 0.05);
-  if (!result.lines.length) return apiError("Could not build a bundle near the target", 409);
-  const name = nameRaw || `MTG Mystery Bundle ~$${(targetCents / 100).toFixed(0)}`;
+  let result: GameBundleResult | null = null;
+  try {
+    result = buildBundleAcrossGames(items as Item[], targetCents, undefined, game);
+  } catch {
+    return apiError("Bundle generation failed", 500, { code: "GEN" });
+  }
+  if (!result) {
+    return apiError(
+      game
+        ? `Couldn't build a bundle from ${game} stock near $${(targetCents / 100).toFixed(0)}`
+        : "Could not build a bundle near the target",
+      409,
+    );
+  }
+  const name = nameRaw || `${result.game || "MTG"} Mystery Bundle ~$${(targetCents / 100).toFixed(0)}`;
 
   // ── Persist + allocate ────────────────────────────────────────────────────
   const { data: bundle, error: bundleError } = await supabase

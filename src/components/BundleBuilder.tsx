@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { NumberDollars } from "@/components/ui/Modal";
+import { ArtworkThumb } from "@/components/ArtworkThumb";
 import { centsToUsd, ITEM_KINDS, kindLabel, truncated } from "@/lib/utils";
-import type { Item, ItemKind } from "@/lib/types";
+import { BUNDLE_TOLERANCE_CENTS, gameOf } from "@/lib/bundle";
+import type { Item, ItemKind, Location } from "@/lib/types";
 
 interface PreviewLine {
   item: Item;
@@ -18,6 +20,7 @@ interface Preview {
   totalCents: number;
   lines: PreviewLine[];
   suggestedName: string;
+  game: string;
 }
 
 const PRESETS = [5000, 10000, 15000, 20000];
@@ -26,7 +29,11 @@ export function BundleBuilder() {
   const router = useRouter();
   const [targetCents, setTargetCents] = useState(10000);
   const [kinds, setKinds] = useState<ItemKind[]>(["sealed", "loose"]);
+  const [games, setGames] = useState<string[]>([]);
+  const [game, setGame] = useState("__any");
   const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
+  const [locations, setLocations] = useState<Location[]>([]);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -43,6 +50,34 @@ export function BundleBuilder() {
     setKinds((ks) => (ks.includes(k) ? ks.filter((x) => x !== k) : [...ks, k]));
   }
 
+  function boxName(locationId: string | null): string {
+    if (!locationId) return "Unassigned";
+    return locations.find((l) => l.id === locationId)?.name ?? "Unassigned";
+  }
+
+  useEffect(() => {
+    fetch("/api/locations")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.locations)) setLocations(data.locations);
+      })
+      .catch(() => {});
+    fetch("/api/inventory")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!Array.isArray(data)) return;
+        const seen = new Map<string, string>();
+        for (const item of data as Item[]) {
+          const label = gameOf(item.category);
+          if (!label) continue;
+          const key = label.toLowerCase();
+          if (!seen.has(key)) seen.set(key, label);
+        }
+        setGames([...seen.values()]);
+      })
+      .catch(() => {});
+  }, []);
+
   async function generate() {
     setBusy(true);
     setError(null);
@@ -55,16 +90,31 @@ export function BundleBuilder() {
       const res = await fetch("/api/bundles/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetCents, kinds }),
+        body: JSON.stringify({
+          targetCents,
+          kinds,
+          ...(game !== "__any" ? { game } : {}),
+        }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error ?? "Couldn't generate a bundle");
+        setError(data?.error ?? `Generation failed (${res.status})`);
+        setPreview(null);
+        return;
+      }
+      if (!data || !Array.isArray(data.lines)) {
+        setError("Generation failed — the server returned an unexpected response.");
         setPreview(null);
         return;
       }
       setPreview(data);
-      if (!name) setName(data.suggestedName);
+      if (!nameEdited || !name.trim()) {
+        setName(data.suggestedName);
+        setNameEdited(false);
+      }
+    } catch {
+      setError("Generation failed — check your connection and try again.");
+      setPreview(null);
     } finally {
       setBusy(false);
     }
@@ -82,19 +132,22 @@ export function BundleBuilder() {
           name: name.trim() || preview.suggestedName,
           targetCents,
           kinds,
+          game: preview.game,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(data?.error ?? "Couldn't create the bundle");
-        setCreating(false);
+        setError(data?.error ?? `Create failed (${res.status})`);
         return;
       }
       flash(`Bundle created — stock reserved`);
       setCreatedRecently((n) => n + 1);
       setPreview(null);
       setName("");
+      setNameEdited(false);
       router.refresh();
+    } catch {
+      setError("Create failed — check your connection and try again.");
     } finally {
       setCreating(false);
     }
@@ -124,6 +177,20 @@ export function BundleBuilder() {
           </div>
         </div>
 
+        <label className="label mt-4">Bundle from</label>
+        <select className="input" value={game} onChange={(e) => setGame(e.target.value)}>
+          <option value="__any">Any — one game per bundle</option>
+          {games.map((g) => (
+            <option key={g} value={g}>
+              {g} only
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-slate-400">
+          Bundles never mix games — MTG stays with MTG, Pokemon with Pokemon. Choices come from
+          your items&apos; categories.
+        </p>
+
         <label className="label mt-4">Include</label>
         <div className="flex flex-wrap gap-2">
           {([...ITEM_KINDS] as ItemKind[]).map((k) => (
@@ -152,15 +219,21 @@ export function BundleBuilder() {
       {preview && (
         <div className="card space-y-3">
           <div>
-            <p className="text-sm font-semibold">Preview</p>
+            <p className="text-sm font-semibold">
+              Preview{preview.game ? ` · ${preview.game}` : ""}
+            </p>
             <p className="flex items-center gap-2 text-sm">
               <span className={badgeColor(preview.totalCents, preview.targetCents)}>
                 Total{" "}
                 {centsToUsd(preview.totalCents)} / target {centsToUsd(preview.targetCents)}
               </span>
               <span className="text-xs text-slate-400">
-                {Math.round((preview.totalCents / preview.targetCents - 1) * 100)}% off target —
-                regenerating picks a fresh random selection
+                {preview.totalCents === preview.targetCents
+                  ? "right on target"
+                  : preview.totalCents > preview.targetCents
+                    ? `${centsToUsd(preview.totalCents - preview.targetCents)} over target`
+                    : `${centsToUsd(preview.targetCents - preview.totalCents)} under target`}{" "}
+                — regenerating picks a fresh random selection
               </span>
             </p>
           </div>
@@ -170,8 +243,11 @@ export function BundleBuilder() {
               <li key={`${l.item.id}-${i}`} className="flex items-center gap-3 py-2">
                 <span className="w-5 shrink-0 text-center text-xs font-bold text-slate-300">{i + 1}</span>
                 {l.item.image_url ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={l.item.image_url} alt="" className="h-12 w-9 shrink-0 rounded-sm border border-slate-200 object-cover" />
+                  <ArtworkThumb
+                    src={l.item.image_url}
+                    alt={l.item.name}
+                    className="h-12 w-9 shrink-0 rounded-sm border border-slate-200"
+                  />
                 ) : (
                   <span className="flex h-12 w-9 shrink-0 items-center justify-center rounded-sm border border-slate-200 bg-slate-100 text-xs text-slate-400">
                     ?
@@ -181,6 +257,7 @@ export function BundleBuilder() {
                   <span className="block truncate text-sm font-medium">{truncated(l.item.name, 55)}</span>
                   <span className="block text-xs text-slate-400">
                     {kindLabel(l.item.kind)}
+                    {` · ${boxName(l.item.location_id)}`}
                     {l.item.set_code ? ` · ${l.item.set_code}` : ""}
                     {l.quantity > 1 ? ` · ×${l.quantity}` : ""}
                   </span>
@@ -194,7 +271,15 @@ export function BundleBuilder() {
 
           <div className="space-y-2 border-t border-slate-100 pt-3">
             <label className="label">Bundle name (for the eBay listing)</label>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={preview.suggestedName} />
+            <input
+              className="input"
+              value={name}
+              onChange={(e) => {
+                setName(e.target.value);
+                setNameEdited(true);
+              }}
+              placeholder={preview.suggestedName}
+            />
             <button className="btn btn-primary w-full" onClick={create} disabled={creating}>
               {creating ? "Reserving stock…" : "Create bundle & reserve stock"}
             </button>
@@ -216,8 +301,8 @@ export function BundleBuilder() {
 }
 
 function badgeColor(total: number, target: number) {
-  const diff = Math.abs(total / target - 1);
-  return diff <= 0.05
+  const within = Math.abs(total - target) <= BUNDLE_TOLERANCE_CENTS;
+  return within
     ? "rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-semibold text-green-700"
     : "rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700";
 }

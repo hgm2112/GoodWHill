@@ -27,45 +27,58 @@ function mulberry32(seed: number) {
   };
 }
 
-interface Slot {
-  index: number;
-  maxQty: number;
+/** Absolute window around the target, in cents (±$15). */
+export const BUNDLE_TOLERANCE_CENTS = 1500;
+
+/**
+ * First word of a category ("MTG Sealed" → "MTG"); "" when blank.
+ * Used to group inventory into games (MTG, Pokemon, …) for bundling.
+ */
+export function gameOf(category: string | null | undefined): string {
+  const c = (category ?? "").trim();
+  if (!c) return "";
+  return c.split(/\s+/)[0] || "";
 }
 
 /**
- * Builds a random bundle from in-stock items summing to `targetCents`.
+ * Builds a random bundle from in-stock items summing to `targetCents` within
+ * an absolute window (`toleranceCents`, default ±$15).
  *
  * Approach: repeated randomized trials. Each trial greedily draws items
  * (weighted toward their value + some variety) until adding another item
- * would overshoot the target by more than it already undershoots. The trial
- * that lands closest to the target (within tolerance) is returned.
+ * would overshoot the window. The trial that lands closest to the target
+ * (within tolerance) is returned; otherwise the closest under-fill is.
+ *
+ * Slots carry the item itself and are indexed locally — never with a position
+ * from the pre-filter array (that mix caused TypeErrors when expensive items
+ * were filtered out).
  *
  * @param items items with quantity > 0 and value_cents > 0
  * @param targetCents desired bundle value
- * @param tolerance relative tolerance, e.g. 0.05 for ±5%
+ * @param toleranceCents absolute tolerance in cents, e.g. 1500 for ±$15
  */
 export function generateBundle(
   items: Item[],
   targetCents: number,
-  tolerance = 0.05,
+  toleranceCents = BUNDLE_TOLERANCE_CENTS,
 ): BundleResult {
   const rng = mulberry32(Math.floor(Math.random() * 2 ** 31));
 
-  const eligible = items
-    .map((item, index) => ({ item, index, maxQty: item.quantity }))
-    .filter((s) => s.item.quantity > 0 && (s.item.value_cents ?? 0) > 0)
-    .filter((s) => s.item.value_cents! <= targetCents * 0.6);
+  // Mystery bundles should hold several items: a single unit may not be worth
+  // more than ~60% of the target.
+  const eligible = items.filter(
+    (item) => item.quantity > 0 && (item.value_cents ?? 0) > 0 && item.value_cents! <= targetCents * 0.6,
+  );
+
+  if (!eligible.length) return { lines: [], totalCents: 0, targetCents };
 
   let best: BundleLine[] | null = null;
   let bestScore = Infinity;
 
-  const totalWeight = eligible.reduce((sum, s) => sum + Math.sqrt(s.item.value_cents!), 0);
-
-  // Pool of items big enough to matter.
-  const pool: Slot[] = eligible.map((s) => ({ index: s.index, maxQty: s.maxQty }));
+  const totalWeight = eligible.reduce((sum, s) => sum + Math.sqrt(s.value_cents!), 0);
 
   for (let trial = 0; trial < 150; trial++) {
-    const lines = new Map<number, number>(); // index -> qty
+    const lines = new Map<number, number>(); // eligible index -> qty
     let running = 0;
     let safety = 0;
 
@@ -74,76 +87,77 @@ export function generateBundle(
       // Draw a weighted-random item. Aim for variety: weight grows with value
       // but lightly favors lower-value items to mix in.
       let pick = rng() * totalWeight;
-      let chosen: Slot | null = null;
-      for (const s of eligible) {
-        pick -= Math.sqrt(s.item.value_cents!);
+      let chosenIndex = -1;
+      for (let i = 0; i < eligible.length; i++) {
+        pick -= Math.sqrt(eligible[i].value_cents!);
         if (pick <= 0) {
-          chosen = { index: s.index, maxQty: s.maxQty };
+          chosenIndex = i;
           break;
         }
       }
-      if (!chosen) chosen = pool[Math.floor(rng() * pool.length)];
+      if (chosenIndex < 0) chosenIndex = Math.floor(rng() * eligible.length);
 
-      const slotItem = eligible[chosen.index];
-      const unit = slotItem.item.value_cents!;
-      const current = lines.get(chosen.index) ?? 0;
+      const chosen = eligible[chosenIndex];
+      const unit = chosen.value_cents!;
+      const current = lines.get(chosenIndex) ?? 0;
 
-      // Staying after this unit would still be below target*(1+0.5): allow it.
-      if (running + unit > targetCents * (1 + tolerance * 2)) {
-        // Try something smaller first.
-        const smaller = eligible.find(
-          (s) => s.item.value_cents! <= targetCents - running && s.item.value_cents! < unit,
+      // Adding this unit would overshoot the window: try something smaller first.
+      if (running + unit > targetCents + toleranceCents * 2) {
+        const smallerIndex = eligible.findIndex(
+          (s) => s.value_cents! <= targetCents + toleranceCents - running && s.value_cents! < unit,
         );
-        if (!smaller) break;
-        const si = eligible.indexOf(smaller);
-        const sc = lines.get(si) ?? 0;
-        if (sc + 1 <= smaller.item.quantity) {
-          lines.set(si, sc + 1);
-          running += smaller.item.value_cents!;
+        if (smallerIndex < 0) break;
+        const sc = lines.get(smallerIndex) ?? 0;
+        if (sc + 1 <= eligible[smallerIndex].quantity) {
+          lines.set(smallerIndex, sc + 1);
+          running += eligible[smallerIndex].value_cents!;
         }
         continue;
       }
 
-      if (current + 1 <= chosen.maxQty) {
-        lines.set(chosen.index, current + 1);
+      if (current + 1 <= chosen.quantity) {
+        lines.set(chosenIndex, current + 1);
         running += unit;
       } else {
         // Pick the closest remaining-cheap item available.
-        const alt = eligible.find(
-          (s) => (lines.get(s.index) ?? 0) + 1 <= s.item.quantity && running + s.item.value_cents! <= targetCents * (1 + tolerance),
+        const altIndex = eligible.findIndex(
+          (s, i) =>
+            (lines.get(i) ?? 0) + 1 <= s.quantity &&
+            running + s.value_cents! <= targetCents + toleranceCents,
         );
-        if (!alt) break;
-        lines.set(alt.index, (lines.get(alt.index) ?? 0) + 1);
-        running += alt.item.value_cents!;
+        if (altIndex < 0) break;
+        lines.set(altIndex, (lines.get(altIndex) ?? 0) + 1);
+        running += eligible[altIndex].value_cents!;
       }
     }
 
-    // Only consider results within tolerance (±5% of target).
-    const accepted = running >= targetCents * (1 - tolerance) && running <= targetCents * (1 + tolerance);
-    if (!accepted) continue;
+    // Only consider results within the absolute window (± toleranceCents).
+    if (Math.abs(running - targetCents) > toleranceCents) continue;
 
     const score = Math.abs(running - targetCents) * 10_000 + Math.abs(lines.size - 8);
     if (score < bestScore) {
       bestScore = score;
       best = [...lines.entries()].map(([index, qty]) => ({
-        item: eligible[index].item,
+        item: eligible[index],
         quantity: qty,
-        valueCents: eligible[index].item.value_cents!,
+        valueCents: eligible[index].value_cents!,
       }));
     }
   }
 
   if (!best) {
-    // Fallback: closest under target regardless of tolerance.
-    let fallback: BundleLine[] = [];
+    // Fallback: fill greedily without ever passing target + tolerance, and
+    // stop as soon as we've reached the target.
+    const fallback: BundleLine[] = [];
     let fallbackRunning = 0;
-    for (const s of eligible) {
-      const unit = s.item.value_cents!;
-      const perItem = Math.min(s.item.quantity, Math.max(1, Math.floor((targetCents - fallbackRunning) / unit)));
-      if (perItem <= 0) continue;
-      fallback = [...fallback, { item: s.item, quantity: perItem, valueCents: unit }];
-      fallbackRunning += perItem * unit;
+    for (const item of eligible) {
       if (fallbackRunning >= targetCents) break;
+      const unit = item.value_cents!;
+      const room = targetCents + toleranceCents - fallbackRunning;
+      const perItem = Math.min(item.quantity, Math.floor(room / unit));
+      if (perItem <= 0) continue;
+      fallback.push({ item, quantity: perItem, valueCents: unit });
+      fallbackRunning += perItem * unit;
     }
     return {
       lines: fallback,
@@ -154,6 +168,60 @@ export function generateBundle(
 
   const total = best.reduce((sum, l) => sum + l.valueCents * l.quantity, 0);
   return { lines: best, totalCents: total, targetCents };
+}
+
+export interface GameBundleResult extends BundleResult {
+  /** Game the bundle was built from (first word of category; "" = uncategorized). */
+  game: string;
+}
+
+/**
+ * Builds a bundle from a single game's stock so MTG/Pokemon/etc. never mix.
+ *
+ * @param game specific game label to restrict to; `null`/`undefined` = "Any"
+ *   (games are tried in random order and the first result landing inside the
+ *   tolerance wins, else the closest).
+ * @returns null when no game could produce a non-empty bundle.
+ */
+export function buildBundleAcrossGames(
+  items: Item[],
+  targetCents: number,
+  toleranceCents = BUNDLE_TOLERANCE_CENTS,
+  game?: string | null,
+): GameBundleResult | null {
+  const groups = new Map<string, { label: string; items: Item[] }>();
+  for (const item of items) {
+    const label = gameOf(item.category);
+    const key = label.toLowerCase();
+    const group = groups.get(key);
+    if (group) group.items.push(item);
+    else groups.set(key, { label, items: [item] });
+  }
+
+  if (game != null) {
+    const group = groups.get(game.trim().toLowerCase());
+    if (!group) return null;
+    const result = generateBundle(group.items, targetCents, toleranceCents);
+    return result.lines.length ? { ...result, game: group.label } : null;
+  }
+
+  // Any: shuffle games and prefer one that lands inside the window.
+  const order = [...groups.values()];
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  let closest: GameBundleResult | null = null;
+  for (const group of order) {
+    const result = generateBundle(group.items, targetCents, toleranceCents);
+    if (!result.lines.length) continue;
+    const candidate: GameBundleResult = { ...result, game: group.label };
+    if (Math.abs(candidate.totalCents - targetCents) <= toleranceCents) return candidate;
+    if (!closest || Math.abs(candidate.totalCents - targetCents) < Math.abs(closest.totalCents - targetCents)) {
+      closest = candidate;
+    }
+  }
+  return closest;
 }
 
 /**
