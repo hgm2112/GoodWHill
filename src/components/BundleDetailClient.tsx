@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { bundleToCsv } from "@/lib/bundle";
-import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, truncated } from "@/lib/utils";
+import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, pluralize, truncated } from "@/lib/utils";
 import type { BundleStatus, BundleWithItems, Location } from "@/lib/types";
 
 const STATUS_STYLES: Record<BundleStatus, string> = {
@@ -61,7 +61,12 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
       });
       setBundle(updated);
       if (status === "cancelled") {
-        flash("Cancelled — reserved stock was restored to inventory");
+        const released = updated?._released ?? 0;
+        flash(
+          released > 0
+            ? `Cancelled — released ${pluralize(released, "reserved line")}; stock restored`
+            : "Cancelled — reserved stock was restored to inventory",
+        );
         router.refresh();
       }
     } catch (e) {

@@ -87,9 +87,9 @@ export async function PATCH(request: Request, { params }: Params) {
   const update: Record<string, unknown> = { status };
   if (body?.ebayListingId) update.ebay_listing_id = String(body.ebayListingId);
 
+  let releasedCount: number | null = null;
   if (status === "cancelled" && bundle.status !== "cancelled" && bundle.status !== "sold") {
-    const released = await releaseAllocations(supabase, user.id, id, "Bundle cancelled");
-    update._released = released;
+    releasedCount = await releaseAllocations(supabase, user.id, id, "Bundle cancelled");
   } else if (status === "sold") {
     await supabase
       .from("allocations")
@@ -106,7 +106,7 @@ export async function PATCH(request: Request, { params }: Params) {
     .select()
     .single();
   if (updateError) return apiError(updateError.message, 500, { code: "DB" });
-  return NextResponse.json(updated);
+  return NextResponse.json({ ...updated, _released: releasedCount });
 }
 
 /** DELETE /api/bundles/:id — release stock and remove the bundle (unless sold). */
