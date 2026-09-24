@@ -11,6 +11,20 @@ type PriceResult =
   | { ok: false; error: string; status: number; code?: string };
 
 /**
+ * Never overwrite a manual value: when an item already has value_cents, drop
+ * the price fields from the update (a picture/name fill still applies).
+ */
+function withoutManualValue(update: Record<string, unknown>, valueCents: number | null) {
+  if (valueCents == null) return update;
+  const next = { ...update };
+  delete next.value_cents;
+  delete next.ebay_avg_value_cents;
+  delete next.price_source;
+  delete next.price_sample_count;
+  return next;
+}
+
+/**
  * Value autofill for one item.
  *   sealed/open → eBay Insights (sold) then Browse (active) by UPC; falls
  *                 back to a name search for UPC-less products; updates
@@ -26,6 +40,7 @@ async function priceOne(item: {
   upc: string | null;
   set_code: string | null;
   image_url: string | null;
+  value_cents: number | null;
 }): Promise<PriceResult> {
   const update: Record<string, unknown> = {
     price_checked_at: new Date().toISOString(),
@@ -88,15 +103,16 @@ async function priceOne(item: {
     };
   }
 
-  return { ok: true, update };
+  return { ok: true, update: withoutManualValue(update, item.value_cents) };
 }
 
 /**
  * POST /api/inventory/refresh-price — value autofill.
  *   { itemId }            → price one item (returns the updated row).
- *   { scope: "unpriced" } → price every item that has never been priced
- *                           (price_checked_at is null), up to 50, sequential
- *                           with per-item try/catch and per-UPC/name dedupe.
+ *   { scope: "unpriced" } → price every item without a value or picture
+ *                           (value_cents null OR image_url null), up to 50,
+ *                           sequential with per-item try/catch and per-UPC/name
+ *                           dedupe. Manual values are never overwritten.
  *                           Returns { refreshed, failed, skipped, errors[] }.
  */
 export async function POST(request: Request) {
@@ -109,10 +125,10 @@ export async function POST(request: Request) {
   if (body?.scope === "unpriced") {
     const { data: items, error } = await supabase
       .from("items")
-      .select("id,kind,name,upc,set_code,image_url")
+      .select("id,kind,name,upc,set_code,image_url,value_cents")
       .eq("owner_id", user.id)
       .in("kind", ["sealed", "open", "loose"])
-      .is("price_checked_at", null)
+      .or("value_cents.is.null,image_url.is.null")
       .limit(50);
     if (error) return apiError(error.message, 500, { code: "DB" });
 
@@ -125,7 +141,7 @@ export async function POST(request: Request) {
       try {
         const cacheKey = `${item.upc ?? ""}|${item.name ?? ""}`;
         const result: PriceResult = cache.has(cacheKey)
-          ? { ok: true, update: cache.get(cacheKey) as Record<string, unknown> }
+          ? { ok: true, update: withoutManualValue(cache.get(cacheKey) as Record<string, unknown>, item.value_cents) }
           : await priceOne(item);
         if (!result.ok) {
           failed++;

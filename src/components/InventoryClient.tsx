@@ -119,7 +119,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
     () =>
       items.filter(
         (i) =>
-          !i.price_checked_at &&
+          (i.value_cents == null || !i.image_url) &&
           (i.kind === "sealed" || i.kind === "open" || i.kind === "loose"),
       ).length,
     [items],
@@ -330,18 +330,13 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
   return (
     <div>
       {/* Page header */}
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Inventory</h1>
-          <p className="text-sm text-slate-500">
-            Simple view for quick selling · Big pictures · No clutter
-          </p>
-        </div>
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-bold">Inventory</h1>
         <button
           className="btn btn-secondary whitespace-nowrap"
           onClick={refreshUnpriced}
           disabled={busy || unpricedCount === 0}
-          title="Fetch eBay active-listing prices for items added but never priced yet"
+          title="Fetch eBay prices/pictures for items without a value or image yet"
         >
           Browse active{unpricedCount > 0 ? ` (${unpricedCount})` : ""}
         </button>
@@ -433,13 +428,8 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         </button>
       </div>
 
-      <p className="mb-3 text-xs text-slate-500">
-        {filtered.length} item{filtered.length === 1 ? "" : "s"} · {summary.units} units ·
-        inventory value {centsToUsd(summary.value)} (filtered by current view)
-      </p>
-
-      {/* Color key */}
-      <div className="card mb-4">
+      {/* Color key + summary */}
+      <div className="card mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
         <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-slate-600">
           {KEY_DOTS.map((d) => (
             <span key={d.label} className="flex items-center gap-1.5" title={d.title}>
@@ -448,6 +438,10 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
             </span>
           ))}
         </div>
+        <p className="text-xs text-slate-500">
+          {filtered.length} item{filtered.length === 1 ? "" : "s"} · {summary.units} units ·
+          inventory value {centsToUsd(summary.value)} (filtered by current view)
+        </p>
       </div>
 
       {manageLocations && (

@@ -96,11 +96,13 @@ Copy `.env.local.example` → `.env.local`. Keys:
   - `DELETE /api/bundles/[id]` releases allocations and restores stock
     (`releaseAllocations` in the route).
   - `POST /api/inventory/refresh-price` prices one item (`{ itemId }`) or
-    everything never priced (`{ scope: "unpriced" }` — sealed/open/loose,
-    `price_checked_at IS NULL`, capped at 50, sequential with per-item
-    try/catch and per-UPC|name lookup dedupe; bulk only ever fills blanks,
-    never overwrites manual values). The Inventory header "Browse active (N)"
-    button drives the bulk mode; scanned items arrive unpriced.
+    everything without a value or picture (`{ scope: "unpriced" }` — sealed/open/loose,
+    `value_cents IS NULL OR image_url IS NULL`, capped at 50, sequential with
+    per-item try/catch and per-UPC|name lookup dedupe; bulk only ever fills
+    blanks, never overwrites manual values — value/price fields are stripped
+    from the update when the item already has a value). The Inventory header
+    "Browse active (N)" button drives the bulk mode; scanned items arrive
+    unpriced.
   - Quantity changes always create an `item_movements` row (reasons: add,
     remove, sale, reserve, release, adjust, import, return).
   - Sealed item identity is `(owner_id, upc, location_id, name)` (partial

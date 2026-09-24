@@ -34,14 +34,21 @@ export function Nav({ email, displayName }: { email: string; displayName: string
     <>
       <header className="sticky top-0 z-30 -mx-3 border-b border-slate-200 bg-white/85 px-3 py-2 backdrop-blur">
         <div className="flex items-center justify-between gap-3">
-          <Link href="/" className="flex items-center gap-2">
+          <Link href="/" className="flex shrink-0 items-center gap-2">
             <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-sm font-black text-white">
               GW
             </span>
             <span className="text-lg font-bold tracking-tight">goodwhilly</span>
           </Link>
 
-          <div className="flex items-center gap-2">
+          {/* Desktop tabs — inline with the header */}
+          <nav className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto sm:flex">
+            {LINKS.filter((l) => l.href !== "/").map((l) => (
+              <NavLink key={l.href} {...l} active={isActive(l.href)} />
+            ))}
+          </nav>
+
+          <div className="flex shrink-0 items-center gap-2">
             <span className="hidden text-sm text-slate-500 sm:inline">
               {displayName ?? email}
             </span>
@@ -73,13 +80,6 @@ export function Nav({ email, displayName }: { email: string; displayName: string
           </nav>
         )}
       </header>
-
-      {/* Desktop top nav */}
-      <nav className="mt-2 hidden items-center gap-1 overflow-x-auto rounded-xl border border-slate-200 bg-white p-1 shadow-sm sm:flex">
-        {LINKS.filter((l) => l.href !== "/").map((l) => (
-          <NavLink key={l.href} {...l} active={isActive(l.href)} />
-        ))}
-      </nav>
 
       {/* Mobile bottom nav */}
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 backdrop-blur sm:hidden">
@@ -119,7 +119,7 @@ function NavLink({
     <Link
       href={href}
       onClick={onClick}
-      className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+      className={`flex items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm font-medium transition ${
         active ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-100"
       }`}
     >
