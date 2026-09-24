@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { bundleToCsv } from "@/lib/bundle";
 import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, truncated } from "@/lib/utils";
-import type { BundleStatus, BundleWithItems } from "@/lib/types";
+import type { BundleStatus, BundleWithItems, Location } from "@/lib/types";
 
 const STATUS_STYLES: Record<BundleStatus, string> = {
   draft: "rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600",
@@ -22,6 +22,21 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+
+  useEffect(() => {
+    fetch("/api/locations")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.locations)) setLocations(data.locations);
+      })
+      .catch(() => {});
+  }, []);
+
+  function boxName(locationId: string | null): string {
+    if (!locationId) return "Unassigned";
+    return locations.find((l) => l.id === locationId)?.name ?? "Unassigned";
+  }
 
   function flash(m: string) {
     setToast(m);
@@ -234,6 +249,7 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
                 <span className="block truncate text-sm font-medium">{truncated(bi.item.name, 55)}</span>
                 <span className="block text-xs text-slate-400">
                   {kindLabel(bi.item.kind)}
+                  {` · ${boxName(bi.item.location_id)}`}
                   {bi.item.set_code ? ` · ${bi.item.set_code}` : ""}
                   {bi.quantity > 1 ? ` · ×${bi.quantity}` : ""}
                 </span>
