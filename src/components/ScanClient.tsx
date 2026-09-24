@@ -22,11 +22,35 @@ export function ScanClient() {
   const [subDraft, setSubDraft] = useState("");
 
   useEffect(() => {
-    if (result?.catalog?.upc) {
-      setProductDraft(result.catalog.name ?? `Product ${result.catalog.upc}`);
+    if (!result) return;
+    const main = result.catalog?.name ?? (result.catalog?.upc ? `Product ${result.catalog.upc}` : "");
+    const row = result.items[0];
+    if (row && row.name !== main) {
+      if (main && row.name.startsWith(`${main}: `)) {
+        setProductDraft(main);
+        setSubDraft(row.name.slice(main.length + 2));
+      } else if (row.name.includes(": ")) {
+        const sep = row.name.indexOf(": ");
+        setProductDraft(row.name.slice(0, sep));
+        setSubDraft(row.name.slice(sep + 2));
+      } else {
+        setProductDraft(row.name);
+        setSubDraft("");
+      }
+    } else {
+      setProductDraft(main);
       setSubDraft("");
     }
-  }, [result?.catalog?.upc, result?.catalog?.name]);
+  }, [result]);
+
+  useEffect(() => {
+    const v = Number(window.localStorage.getItem("gw.scan.delta") ?? "");
+    if (Number.isInteger(v) && v >= 1 && v <= 99) setDelta(v);
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("gw.scan.delta", String(delta));
+  }, [delta]);
 
   useEffect(() => {
     fetch("/api/locations")
@@ -431,15 +455,29 @@ export function ScanClient() {
               </div>
 
               <div className="card flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="max-w-28">
+                <div className="max-w-32">
                   <label className="label">Add quantity</label>
-                  <input
-                    className="input"
-                    type="number"
-                    min={1}
-                    value={delta}
-                    onChange={(e) => setDelta(Math.max(1, Number(e.target.value) || 1))}
-                  />
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="btn btn-secondary px-3 py-2"
+                      onClick={() => setDelta((d) => Math.max(1, d - 1))}
+                      disabled={busy || delta <= 1}
+                      aria-label="Decrease quantity"
+                    >
+                      −
+                    </button>
+                    <span className="min-w-10 flex-1 rounded-lg border border-slate-200 bg-white py-2 text-center text-sm font-semibold">
+                      {delta}
+                    </span>
+                    <button
+                      className="btn btn-secondary px-3 py-2"
+                      onClick={() => setDelta((d) => Math.min(99, d + 1))}
+                      disabled={busy || delta >= 99}
+                      aria-label="Increase quantity"
+                    >
+                      +
+                    </button>
+                  </div>
                 </div>
                 <button
                   className="btn btn-primary flex-1"
