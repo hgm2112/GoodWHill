@@ -20,14 +20,17 @@ export function ListingsClient({
     setError(null);
     try {
       const res = await fetch("/api/ebay/sync-listings", { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
       if (!res.ok) {
         setError(data?.error ?? "Sync failed");
         setSyncState("error");
         if (data?.code === "EBAY_NOT_CONNECTED") setListings([]);
         return;
       }
-      setListings(data.listings ?? []);
+      const refreshed = await fetch("/api/listings").then((r) =>
+        r.ok ? r.json().catch(() => null) : null,
+      );
+      if (Array.isArray(refreshed)) setListings(refreshed);
       setSyncState("idle");
     } catch {
       setError("Sync failed");
@@ -68,32 +71,41 @@ export function ListingsClient({
       {listings.length > 0 && (
         <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
           {listings.map((l) => (
-            <li key={l.id} className="card flex items-start gap-3 p-3">
-              {l.image_urls?.[0] && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={l.image_urls[0]}
-                  alt=""
-                  className="h-14 w-14 shrink-0 rounded-md border border-slate-200 object-cover"
-                />
-              )}
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-slate-800" title={l.title}>
-                  {truncated(l.title, 60)}
-                </p>
-                <p className="mt-0.5 text-sm text-emerald-700">
-                  {l.price_cents != null ? centsToUsd(l.price_cents) : "—"}
-                  <span className="ml-1 text-xs font-normal text-slate-400">{l.currency}</span>
-                </p>
-                <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
-                  <span className="badge badge-slate">{l.status}</span>
-                  {l.quantity_available != null && <span>{l.quantity_available} avail</span>}
-                  {l.quantity_sold != null && <span className="text-emerald-600">{l.quantity_sold} sold</span>}
+            <li key={l.id}>
+              <a
+                href={l.item_uri || `https://www.ebay.com/itm/${l.ebay_listing_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="card flex items-start gap-3 p-3 transition hover:border-slate-300 hover:shadow-md"
+              >
+                {l.image_urls?.[0] && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={l.image_urls[0]}
+                    alt=""
+                    className="h-14 w-14 shrink-0 rounded-md border border-slate-200 object-cover"
+                  />
+                )}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-slate-800" title={l.title}>
+                    {truncated(l.title, 60)}
+                  </p>
+                  <p className="mt-0.5 text-sm text-emerald-700">
+                    {l.price_cents != null ? centsToUsd(l.price_cents) : "—"}
+                    <span className="ml-1 text-xs font-normal text-slate-400">{l.currency}</span>
+                  </p>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-slate-400">
+                    <span className="badge badge-slate">{l.status}</span>
+                    {l.quantity_available != null && <span>{l.quantity_available} avail</span>}
+                    {l.quantity_sold != null && (
+                      <span className="text-emerald-600">{l.quantity_sold} sold</span>
+                    )}
+                  </div>
+                  <p className="mt-1 text-[11px] text-slate-300">
+                    synced {l.last_synced_at ? formatDateTime(l.last_synced_at) : "—"}
+                  </p>
                 </div>
-                <p className="mt-1 text-[11px] text-slate-300">
-                  synced {l.last_synced_at ? formatDateTime(l.last_synced_at) : "—"}
-                </p>
-              </div>
+              </a>
             </li>
           ))}
         </ul>
