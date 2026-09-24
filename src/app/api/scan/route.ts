@@ -8,7 +8,7 @@ import { normalizeName } from "@/lib/utils";
  *   carry this UPC (or match the catalog product).
  *
  * POST /api/scan — quick "I have this item" flow.
- *   Body: { upc, delta, name?, set_code?, image_url?, location_id? }
+ *   Body: { upc, delta, name?, set_code?, image_url?, location_id?, category? }
  *   1. Upserts the UPC into the shared catalog with a best-effort product
  *      name (from the request, or auto-resolved by GTIN when eBay configured).
  *   2. Finds the sealed item for (owner, upc, box, name) — `name` defaults to
@@ -176,6 +176,7 @@ export async function POST(request: Request) {
 
   if (!item) {
     const setCode = body?.set_code ? String(body.set_code).toUpperCase().slice(0, 12) : null;
+    const category = body?.category ? String(body.category).trim().slice(0, 64) : "";
     // Deck variants (shared barcode) get their own box art by name — the item
     // carries it while the shared catalog keeps the generic pack image.
     let itemImageUrl = imageUrl;
@@ -202,7 +203,7 @@ export async function POST(request: Request) {
         location_id: locationId,
         quantity: 0,
         active: true,
-        category: "MTG Sealed",
+        category: category || "MTG Sealed",
       })
       .select()
       .single();

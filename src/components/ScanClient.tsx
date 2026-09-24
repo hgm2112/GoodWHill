@@ -20,6 +20,58 @@ export function ScanClient() {
   const [rowEditSub, setRowEditSub] = useState("");
   const [productDraft, setProductDraft] = useState("");
   const [subDraft, setSubDraft] = useState("");
+  const [catPresets, setCatPresets] = useState<string[]>(["MTG Sealed"]);
+  const [catChoice, setCatChoice] = useState("MTG Sealed");
+  const [catCustom, setCatCustom] = useState("");
+
+  useEffect(() => {
+    const stored = localStorage.getItem("gw_scan_category") ?? "";
+    const applyStored = (list: string[]) => {
+      if (!stored || stored === "MTG Sealed") return;
+      if (list.includes(stored)) {
+        setCatChoice(stored);
+      } else {
+        setCatChoice("__custom");
+        setCatCustom(stored);
+      }
+    };
+    fetch("/api/inventory")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        const extra = Array.isArray(data)
+          ? Array.from(
+              new Set(
+                data
+                  .map((i: Item) => i.category?.trim() ?? "")
+                  .filter((c: string) => c && c !== "MTG Sealed"),
+              ),
+            ).sort()
+          : [];
+        const list = ["MTG Sealed", ...extra];
+        setCatPresets(list);
+        applyStored(list);
+      })
+      .catch(() => applyStored(["MTG Sealed"]));
+  }, []);
+
+  function chooseCategory(value: string) {
+    if (value === "__custom") {
+      setCatChoice("__custom");
+      return;
+    }
+    setCatChoice(value);
+    setCatCustom("");
+    localStorage.setItem("gw_scan_category", value);
+  }
+
+  function typeCategory(v: string) {
+    setCatCustom(v);
+    if (v.trim()) localStorage.setItem("gw_scan_category", v.trim());
+  }
+
+  function pickedCategory() {
+    return catChoice === "__custom" ? catCustom.trim() : catChoice;
+  }
 
   useEffect(() => {
     if (!result) return;
@@ -189,6 +241,7 @@ export function ScanClient() {
           location_id: locId || null,
           name: full,
           product_name: main,
+          category: pickedCategory(),
         }),
       });
       const data = await res.json();
@@ -234,6 +287,33 @@ export function ScanClient() {
           <p className="mt-1 text-xs text-slate-400">
             New products get stamped with this box and it&apos;s remembered for next time. Existing
             items keep their current box. Manage boxes under Inventory.
+          </p>
+        </div>
+        <div className="min-w-0 flex-1">
+          <label className="label">Category for new items</label>
+          <select
+            className="input"
+            value={catChoice}
+            onChange={(e) => chooseCategory(e.target.value)}
+          >
+            {catPresets.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+            <option value="__custom">Custom…</option>
+          </select>
+          {catChoice === "__custom" && (
+            <input
+              className="input mt-1.5"
+              value={catCustom}
+              onChange={(e) => typeCategory(e.target.value)}
+              placeholder="e.g. Pokemon Sealed"
+            />
+          )}
+          <p className="mt-1 text-xs text-slate-400">
+            New products get stamped with this category and it&apos;s remembered for next time.
+            Existing items keep their category.
           </p>
         </div>
       </div>
