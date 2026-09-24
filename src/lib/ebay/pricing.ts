@@ -171,7 +171,10 @@ function requiredTokens(name: string): string[] {
 
 function titleMatches(tokens: string[], title: string): boolean {
   const t = title.toLowerCase();
-  return tokens.length === 0 || tokens.every((tok) => t.includes(tok));
+  return (
+    tokens.length === 0 ||
+    tokens.every((tok) => new RegExp(`\\b${tok.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(t))
+  );
 }
 
 function isConditionClean(title: string): boolean {
@@ -273,16 +276,71 @@ export function nameHasVariant(name: string): boolean {
   return Boolean(splitVariant(name).variant);
 }
 
+/** Title words that signal the sealed PACKAGE rather than a loose single-card listing. */
+const PACKAGE_WORDS: RegExp[] = [
+  /\bsealed\b/,
+  /\bunopened\b/,
+  /\bunsealed\b/,
+  /\bbooster\b/,
+  /\bpacks?\b/,
+  /\bedition\b/,
+  /\bcommander\b/,
+  /\bdeck\b/,
+  /\bdrop\b/,
+  /\bbox\b/,
+  /\bdisplay\b/,
+  /\bfoil edition\b/,
+];
+
+/** Title hints that a listing is a loose single card (e.g. Secret Lair "Farseek 2698"). */
+const SINGLE_HINTS: RegExp[] = [/\b(?!19\d{2}|20\d{2})\d{3,4}\b/, /\bsingle\b/];
+
+function scoreTitle(title: string): number {
+  const t = title.toLowerCase();
+  let score = 0;
+  for (const re of PACKAGE_WORDS) if (re.test(t)) score += 1;
+  for (const re of SINGLE_HINTS) if (re.test(t)) score -= 2;
+  return score;
+}
+
+/** The most package-like kept entry's image, keeping eBay relevance order on ties. */
+export function pickBestImage(entries: BrowseEntry[]): string | null {
+  if (!entries.length) return null;
+  let best = entries[0];
+  let bestScore = scoreTitle(best.title);
+  for (const e of entries.slice(1)) {
+    const s = scoreTitle(e.title);
+    if (s > bestScore) {
+      best = e;
+      bestScore = s;
+    }
+  }
+  return best.image;
+}
+
+/**
+ * Matching listing pool for a product name. When a UPC is known the Browse
+ * search runs by GTIN (returns the right sealed packages, and for shared
+ * barcodes the variant tokens in requiredTokens pick the right deck) and only
+ * falls back to a keyword search when the GTIN pool is empty.
+ */
+export async function matchingPool(name: string, gtin?: string | null): Promise<BrowseEntry[]> {
+  if (gtin) {
+    const byGtin = keepMatching(await browseSearch({ q: null, gtin }), name);
+    if (byGtin.length) return byGtin;
+  }
+  const q = name.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
+  if (!q) return [];
+  return keepMatching(await browseSearch({ q, gtin: null }), name);
+}
+
 /**
  * Box art for a sealed product by name (works for deck variants and UPC-less
  * products) from a matching, condition-clean listing. Uses the same keyword
  * match pool as price lookups. Returns null when nothing credible matches.
  */
-export async function resolveNameImage(name: string): Promise<string | null> {
-  const q = name.replace(/[;:]/g, " ").replace(/\s+/g, " ").trim();
-  if (!q) return null;
-  const entries = await browseSearch({ q, gtin: null });
-  return keepMatching(entries, name)[0]?.image ?? null;
+export async function resolveNameImage(name: string, gtin?: string | null): Promise<string | null> {
+  return pickBestImage(await matchingPool(name, gtin));
 }
 
 /**
@@ -290,9 +348,9 @@ export async function resolveNameImage(name: string): Promise<string | null> {
  * condition-clean listing. Returns null when the name has no variant or
  * nothing credible matches.
  */
-export async function resolveVariantImage(name: string): Promise<string | null> {
+export async function resolveVariantImage(name: string, gtin?: string | null): Promise<string | null> {
   if (!nameHasVariant(name)) return null;
-  return resolveNameImage(name);
+  return resolveNameImage(name, gtin);
 }
 
 /**
@@ -312,9 +370,11 @@ export async function searchActive(opts: {
   const hasVariant = Boolean(splitVariant(query).variant);
 
   if (hasVariant) {
-    // Shared pack barcode: the UPC cannot distinguish decks — name only.
+    // Shared pack barcode: the UPC cannot distinguish decks — but it still
+    // narrows the pool to the right product family (deck variants included),
+    // so search by GTIN first and only fall back to a name search.
     if (!q) return NO_STATS;
-    return toStats(keepMatching(await browseSearch({ q, gtin: null }), query));
+    return toStats(await matchingPool(query, gtin));
   }
 
   if (gtin) {

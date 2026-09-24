@@ -133,8 +133,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
   (asking prices are right-skewed). Single-barcode products are matched
   exactly by GTIN; deck variants (`"Set: Variant"` names — the shared-pack
   UPC cannot distinguish them, e.g. Commander Masters decks) are priced by a
-  `q` keyword search on the name, filtered to listings whose titles carry the
-  variant tokens and are condition-clean (no playmat/opened/promo/etc.).
+  GTIN search narrowed by the variant tokens (falling back to a `q` keyword
+  search when the GTIN pool is empty), filtered to listings whose titles carry
+  the variant tokens and are condition-clean (no playmat/opened/promo/etc.).
   Returns no price (`source: none`) rather than cross-variant listings when
   nothing credible matches. `resolveVariantImage(name)` fetches the matching
   listing's box art for deck variants; the item carries that art while the
@@ -143,6 +144,15 @@ Copy `.env.local.example` → `.env.local`. Keys:
   `price_source`, `price_sample_count`, `price_checked_at`).
   `open`-kind items use this same sealed pipeline and ARE priced on
   sealed-condition listings.
+  Name-based matching (`requiredTokens`/`titleMatches`/`keepMatching`) is
+  word-boundary; when a UPC is known, `matchingPool` searches by GTIN first
+  (shared barcodes are narrowed by the variant tokens) and only falls back to
+  a keyword search. Box art is chosen by `pickBestImage` from the kept pool:
+  titles are scored for sealed-package words (sealed/booster/edition/commander
+  deck/drop/box/etc.) minus loose-single hints (collector numbers like
+  "Farseek 2698", "single") so single-card listings never become product art.
+  These flows are verified with `scripts/probe-image-picks.ts` and applied by
+  `npm run backfill-art`.
 - Own listings sync: `src/lib/ebay/listings.ts` `syncEbaysListings(userId)`
   uses the legacy Trading API `GetMyeBaySelling` (ActiveList) — the app is a
   legacy-granted app whose accounts list via the classic/website flow, so the

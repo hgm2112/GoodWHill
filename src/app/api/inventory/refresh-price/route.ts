@@ -55,11 +55,12 @@ export async function POST(request: Request) {
     update.price_sample_count = lookup.count;
 
     // Box art by name: deck variants (shared barcode) and UPC-less products
-    // can't use the catalog image, so their art comes from a matching
-    // listing — refreshed every time so stale art heals. A failed lookup
-    // keeps whatever art is already there.
+    // can't rely on the catalog image, so their art comes from a matching
+    // listing — refreshed every time so stale art heals. The UPC narrows the
+    // search pool to the right product family. A failed lookup either keeps
+    // whatever art is already there.
     if (nameHasVariant(item.name)) {
-      update.image_url = (await resolveVariantImage(item.name).catch(() => null)) ?? item.image_url;
+      update.image_url = (await resolveVariantImage(item.name, item.upc).catch(() => null)) ?? item.image_url;
     } else if (!item.upc && item.name) {
       update.image_url = (await resolveNameImage(item.name).catch(() => null)) ?? item.image_url;
     }

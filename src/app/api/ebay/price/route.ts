@@ -52,7 +52,7 @@ export async function POST(request: Request) {
       // Deck variants (shared barcode) get their own box art by name; the
       // shared catalog keeps the generic pack image.
       const imageUrl = name
-        ? ((await resolveVariantImage(name).catch(() => null)) ?? catalogImageUrl)
+        ? ((await resolveVariantImage(name, upc).catch(() => null)) ?? catalogImageUrl)
         : catalogImageUrl;
       if (resolved?.name) {
         product = { name: resolved.name, image_url: imageUrl };

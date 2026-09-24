@@ -3,6 +3,7 @@
  * image_url predates name-aware artwork and still carries the shared-pack/UPC
  * image. Resolution runs once per distinct name (one Browse call each) and
  * only rows where the resolver returns a NEW image are updated (idempotent).
+ * Search pools are narrowed by the item's UPC when present.
  *
  * Run with:  npm run backfill-art
  * Env:       .env.local (loaded automatically) — NEXT_PUBLIC_SUPABASE_URL,
@@ -14,6 +15,7 @@ import { nameHasVariant, resolveVariantImage } from "@/lib/ebay/pricing";
 interface VariantItem {
   id: string;
   name: string;
+  upc: string | null;
   image_url: string | null;
 }
 
@@ -55,7 +57,7 @@ async function main() {
   }
 
   const listRes = await rest(
-    `${baseUrl}/rest/v1/items?select=id,name,image_url&kind=eq.sealed&limit=1000`,
+    `${baseUrl}/rest/v1/items?select=id,name,upc,image_url&kind=in.(sealed,open)&limit=1000`,
   );
   if (!listRes.ok) {
     console.error("Failed to load items:", listRes.status, await listRes.text());
@@ -77,7 +79,7 @@ async function main() {
     console.log(`\n${it.name}`);
     try {
       if (!imageCache.has(it.name)) {
-        imageCache.set(it.name, await resolveVariantImage(it.name));
+        imageCache.set(it.name, await resolveVariantImage(it.name, it.upc));
       }
       const fresh = imageCache.get(it.name) ?? null;
       console.log(`  ${short(it.image_url)} -> ${short(fresh)}`);
