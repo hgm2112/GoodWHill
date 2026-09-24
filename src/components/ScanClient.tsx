@@ -146,6 +146,7 @@ export function ScanClient() {
   useEffect(() => {
     const code = upc.replace(/\D/g, "");
     if (!code) return;
+    setDelta(1);
     runLookup(code);
   }, [upc]);
 
