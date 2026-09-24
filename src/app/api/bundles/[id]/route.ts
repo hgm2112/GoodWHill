@@ -56,11 +56,12 @@ export async function GET(request: Request, { params }: Params) {
 
   const { data: bundle, error } = await supabase
     .from("bundles")
-    .select("*, bundle_items(*, item(*)), allocations(*)")
+    .select("*, bundle_items(*, item:items(*)), allocations(*)")
     .eq("id", id)
     .eq("owner_id", user.id)
     .single();
-  if (error || !bundle) return apiError("Bundle not found", 404);
+  if (error) return apiError(error.message, 500, { code: "DB" });
+  if (!bundle) return apiError("Bundle not found", 404);
   return NextResponse.json(bundle);
 }
 

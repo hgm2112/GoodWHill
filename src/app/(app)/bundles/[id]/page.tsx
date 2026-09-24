@@ -14,13 +14,15 @@ export default async function BundleDetailPage({ params }: { params: Promise<{ i
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("bundles")
-    .select("*, bundle_items(*, item(*))")
+    .select("*, bundle_items(*, item:items(*))")
     .eq("id", id)
     .eq("owner_id", user.id)
     .single();
 
+  // PGRST116 = no rows matched; anything else is a real failure, not a 404.
+  if (error && error.code !== "PGRST116") throw error;
   if (!data) notFound();
 
   const normalized = {
