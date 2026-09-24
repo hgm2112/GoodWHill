@@ -115,6 +115,16 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
     return { value, units };
   }, [filtered]);
 
+  const unpricedCount = useMemo(
+    () =>
+      items.filter(
+        (i) =>
+          !i.price_checked_at &&
+          (i.kind === "sealed" || i.kind === "open" || i.kind === "loose"),
+      ).length,
+    [items],
+  );
+
   function flash(message: string) {
     setToast(message);
     setTimeout(() => setToast(null), 2500);
@@ -200,6 +210,32 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         flash(`Value updated: ${centsToUsd(data.value_cents)}`);
       }
       load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refreshUnpriced() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/inventory/refresh-price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "unpriced" }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        flash(data?.error ?? "Refresh failed");
+      } else if (data?.refreshed == null) {
+        flash("Refresh failed — unexpected response");
+      } else if (data.failed > 0) {
+        flash(`Priced ${data.refreshed} new item${data.refreshed === 1 ? "" : "s"} · ${data.failed} failed`);
+      } else {
+        flash(data.refreshed > 0 ? `Priced ${data.refreshed} new item${data.refreshed === 1 ? "" : "s"}` : "Nothing to price yet");
+      }
+      load();
+    } catch {
+      flash("Refresh failed — check your connection");
     } finally {
       setBusy(false);
     }
@@ -294,11 +330,21 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
   return (
     <div>
       {/* Page header */}
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold">Inventory</h1>
-        <p className="text-sm text-slate-500">
-          Simple view for quick selling · Big pictures · No clutter
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Inventory</h1>
+          <p className="text-sm text-slate-500">
+            Simple view for quick selling · Big pictures · No clutter
+          </p>
+        </div>
+        <button
+          className="btn btn-secondary whitespace-nowrap"
+          onClick={refreshUnpriced}
+          disabled={busy || unpricedCount === 0}
+          title="Fetch eBay active-listing prices for items added but never priced yet"
+        >
+          Browse active{unpricedCount > 0 ? ` (${unpricedCount})` : ""}
+        </button>
       </div>
 
       {/* Toolbar */}

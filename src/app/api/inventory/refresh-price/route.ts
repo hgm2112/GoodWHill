@@ -4,46 +4,44 @@ import { lookupSealedPrice, primaryCents, resolveNameImage, resolveProductByGtin
 import { ebayConfigured } from "@/lib/ebay/oauth";
 import { getCardByName, cardUsdCents } from "@/lib/scryfall";
 
+export const maxDuration = 120;
+
+type PriceResult =
+  | { ok: true; update: Record<string, unknown> }
+  | { ok: false; error: string; status: number; code?: string };
+
 /**
- * POST /api/inventory/refresh-price — value autofill for one item.
+ * Value autofill for one item.
  *   sealed/open → eBay Insights (sold) then Browse (active) by UPC; falls
  *                 back to a name search for UPC-less products; updates
  *                 name/image from the product if those are empty. Opened items
  *                 are priced on sealed-condition listings.
  *   loose       → Scryfall current price for the card.
- *   used/other  → manual only (no-op).
+ *   used/other  → manual only (error).
  */
-export async function POST(request: Request) {
-  const auth = await authUser();
-  if (!auth) return apiError("Unauthorized", 401);
-  const { supabase, user } = auth;
-
-  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  const itemId = String(body?.itemId ?? "");
-  if (!itemId) return apiError("itemId required");
-
-  const { data: item, error } = await supabase
-    .from("items")
-    .select("*")
-    .eq("id", itemId)
-    .eq("owner_id", user.id)
-    .maybeSingle();
-  if (error || !item) return apiError("Item not found", 404);
-
+async function priceOne(item: {
+  id: string;
+  kind: string;
+  name: string;
+  upc: string | null;
+  set_code: string | null;
+  image_url: string | null;
+}): Promise<PriceResult> {
   const update: Record<string, unknown> = {
     price_checked_at: new Date().toISOString(),
   };
 
   if (item.kind === "sealed" || item.kind === "open") {
     if (!item.upc && !item.name) {
-      return apiError("Sealed/open items need a UPC or name before eBay can price them", 400);
+      return { ok: false, status: 400, error: "Sealed/open items need a UPC or name before eBay can price them" };
     }
     if (!ebayConfigured()) {
-      return apiError(
-        "eBay is not configured yet. Add EBAY_CLIENT_ID/SECRET/RUNAME to use price autofill; for now set the value manually.",
-        409,
-        { code: "EBAY_NOT_CONFIGURED" },
-      );
+      return {
+        ok: false,
+        status: 409,
+        code: "EBAY_NOT_CONFIGURED",
+        error: "eBay is not configured yet. Add EBAY_CLIENT_ID/SECRET/RUNAME to use price autofill; for now set the value manually.",
+      };
     }
 
     const lookup = await lookupSealedPrice({ gtin: item.upc ?? null, query: item.name });
@@ -74,7 +72,7 @@ export async function POST(request: Request) {
   } else if (item.kind === "loose") {
     const card = await getCardByName(item.name, item.set_code);
     if (!card) {
-      return apiError("Could not find this card on Scryfall", 404, { code: "SCRYFAIL" });
+      return { ok: false, status: 404, code: "SCRYFAIL", error: "Could not find this card on Scryfall" };
     }
     const cents = cardUsdCents(card);
     update.value_cents = cents;
@@ -83,12 +81,100 @@ export async function POST(request: Request) {
     update.price_sample_count = 1;
     if (!item.image_url && card.image_uris?.small) update.image_url = card.image_uris.small;
   } else {
-    return apiError(`${item.kind} items have no automatic price source; set the value manually.`, 400);
+    return {
+      ok: false,
+      status: 400,
+      error: `${item.kind} items have no automatic price source; set the value manually.`,
+    };
   }
+
+  return { ok: true, update };
+}
+
+/**
+ * POST /api/inventory/refresh-price — value autofill.
+ *   { itemId }            → price one item (returns the updated row).
+ *   { scope: "unpriced" } → price every item that has never been priced
+ *                           (price_checked_at is null), up to 50, sequential
+ *                           with per-item try/catch and per-UPC/name dedupe.
+ *                           Returns { refreshed, failed, skipped, errors[] }.
+ */
+export async function POST(request: Request) {
+  const auth = await authUser();
+  if (!auth) return apiError("Unauthorized", 401);
+  const { supabase, user } = auth;
+
+  const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+
+  if (body?.scope === "unpriced") {
+    const { data: items, error } = await supabase
+      .from("items")
+      .select("id,kind,name,upc,set_code,image_url")
+      .eq("owner_id", user.id)
+      .in("kind", ["sealed", "open", "loose"])
+      .is("price_checked_at", null)
+      .limit(50);
+    if (error) return apiError(error.message, 500, { code: "DB" });
+
+    const cache = new Map<string, Record<string, unknown>>();
+    let refreshed = 0;
+    let failed = 0;
+    const errors: { name: string | null; error: string }[] = [];
+
+    for (const item of items ?? []) {
+      try {
+        const cacheKey = `${item.upc ?? ""}|${item.name ?? ""}`;
+        const result: PriceResult = cache.has(cacheKey)
+          ? { ok: true, update: cache.get(cacheKey) as Record<string, unknown> }
+          : await priceOne(item);
+        if (!result.ok) {
+          failed++;
+          errors.push({ name: item.name, error: result.error });
+          continue;
+        }
+        if (!cache.has(cacheKey)) cache.set(cacheKey, result.update);
+        const { error: updateError } = await supabase
+          .from("items")
+          .update(result.update)
+          .eq("id", item.id)
+          .eq("owner_id", user.id);
+        if (updateError) {
+          failed++;
+          errors.push({ name: item.name, error: updateError.message });
+        } else {
+          refreshed++;
+        }
+      } catch {
+        failed++;
+        errors.push({ name: item.name, error: "Price lookup failed" });
+      }
+    }
+
+    return NextResponse.json({
+      refreshed,
+      failed,
+      skipped: (items?.length ?? 0) - refreshed - failed,
+      errors,
+    });
+  }
+
+  const itemId = String(body?.itemId ?? "");
+  if (!itemId) return apiError("itemId required");
+
+  const { data: item, error } = await supabase
+    .from("items")
+    .select("*")
+    .eq("id", itemId)
+    .eq("owner_id", user.id)
+    .maybeSingle();
+  if (error || !item) return apiError("Item not found", 404);
+
+  const result = await priceOne(item);
+  if (!result.ok) return apiError(result.error, result.status, result.code ? { code: result.code } : undefined);
 
   const { data: updated, error: updateError } = await supabase
     .from("items")
-    .update(update)
+    .update(result.update)
     .eq("id", itemId)
     .eq("owner_id", user.id)
     .select()
