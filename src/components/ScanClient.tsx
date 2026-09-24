@@ -44,15 +44,6 @@ export function ScanClient() {
   }, [result]);
 
   useEffect(() => {
-    const v = Number(window.localStorage.getItem("gw.scan.delta") ?? "");
-    if (Number.isInteger(v) && v >= 1 && v <= 99) setDelta(v);
-  }, []);
-
-  useEffect(() => {
-    window.localStorage.setItem("gw.scan.delta", String(delta));
-  }, [delta]);
-
-  useEffect(() => {
     fetch("/api/locations")
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
@@ -209,6 +200,7 @@ export function ScanClient() {
       flash(`Added ${pluralize(quantity, "unit")} — new stock ${pluralize(data.item.quantity, "unit")}`);
       setResult(null);
       setUpc("");
+      setDelta(1);
       setError(null);
     } catch {
       setError("Could not add stock");
