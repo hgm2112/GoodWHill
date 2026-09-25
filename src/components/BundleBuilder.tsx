@@ -136,10 +136,9 @@ export function BundleBuilder() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: name.trim() || preview.suggestedName,
-          targetCents,
-          kinds,
-          dominant,
-          game: preview.game,
+          targetCents: preview.priceCents,
+          targetValueCents: preview.targetCents,
+          lines: preview.lines.map((l) => ({ itemId: l.item.id, quantity: l.quantity })),
         }),
       });
       const data = await res.json().catch(() => null);
