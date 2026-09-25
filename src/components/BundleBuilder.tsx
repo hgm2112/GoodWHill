@@ -32,6 +32,7 @@ export function BundleBuilder() {
   const [kinds, setKinds] = useState<ItemKind[]>(["sealed", "loose"]);
   const [games, setGames] = useState<string[]>([]);
   const [game, setGame] = useState("__any");
+  const [dominant, setDominant] = useState(true);
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -94,6 +95,7 @@ export function BundleBuilder() {
         body: JSON.stringify({
           targetCents,
           kinds,
+          dominant,
           ...(game !== "__any" ? { game } : {}),
         }),
       });
@@ -133,6 +135,7 @@ export function BundleBuilder() {
           name: name.trim() || preview.suggestedName,
           targetCents,
           kinds,
+          dominant,
           game: preview.game,
         }),
       });
@@ -209,6 +212,22 @@ export function BundleBuilder() {
             </label>
           ))}
         </div>
+
+        <label className="mt-4 flex items-start gap-1.5 text-sm text-slate-600">
+          <input
+            type="checkbox"
+            checked={dominant}
+            onChange={(e) => setDominant(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            One dominant item
+            <span className="block text-xs text-slate-400">
+              Starts with your priciest eligible item and fills with smaller stuff.
+              Uncheck for a random mix.
+            </span>
+          </span>
+        </label>
 
         <div className="mt-4 flex gap-2">
           <button className="btn btn-primary flex-1" onClick={generate} disabled={busy || creating}>

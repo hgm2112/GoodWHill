@@ -1,18 +1,22 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-24 (4th session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-24 (5th session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-**Bundle duplicates** (code complete, typecheck/lint green, **UNCOMMITTED** —
-commit when the user asks): generated bundles may repeat an item when it's in
-stock — **under $20 items only, max 5 of the same product per bundle; $20+
-items appear once**. Probe-verified (`npx tsx scripts/probe-bundle-dupes.ts`:
-56–71% of bundles contain a dup line, zero rule violations at $50/$100/$150
-fill targets). The 10% bundle discount was committed this session as
-`89ac676`; price history as `94528d0` (migration `0009` applied by the user).
+**Dominant-anchor bundle composition** (code complete, typecheck/lint/probe
+green, **UNCOMMITTED** — commit when the user asks): `generateBundle` gained a
+toggleable composition mode (default ON): each bundle anchors on one of the
+top-5 priciest eligible items (sqrt(value)-weighted) and fills ONLY with
+items worth ≤50% of that anchor; lines return anchor-first, fillers
+value-desc. Unchecking the new builder checkbox ("One dominant item") sends
+`dominant: false` and falls back to the old plain random mix. No DB change —
+generation-time only. Probe-verified both modes (100% anchor-first, 100%
+filler-tier compliance, 0 dup-rule violations at $50/$100/$150 fill targets).
+Bundle duplicates shipped this session as `24de6a9`; discount as `89ac676`;
+price history as `94528d0` (migration `0009` applied by the user).
 
 ## What We Did (this session)
 
@@ -55,7 +59,7 @@ fill targets). The 10% bundle discount was committed this session as
    untouched: listing drafts stay price-free (`dd4d7e2` respected), bundle
    name = game label, sales record gross you type yourself. No migration.
    (Committed this session as `89ac676`.)
-6. **Bundle duplicates** (UNCOMMITTED, code complete): user rules — only
+6. **Bundle duplicates** (`24de6a9`, pushed): user rules — only
    items **under $20** may repeat, **max 5 of the same product per bundle**
    (bounded by stock); $20+ items at most once. `generateBundle` rewritten:
    per-item `maxUnits` cap enforced on every add-path (main draw,
@@ -66,7 +70,23 @@ fill targets). The 10% bundle discount was committed this session as
    changes (`×N` + line totals already render). Verified with the new
    `scripts/probe-bundle-dupes.ts`: 56–71% of 200–500 bundles contain a dup
    line at $50/$100/$150 fill targets, **0 rule violations**, avg fill on
-   target.
+   target. (Commit message: quote the message with single quotes — it contains
+   `$20`, which bash ate once → mangled `9f36ca8`, fixed via amend +
+   `--force-with-lease`.)
+7. **Dominant-anchor composition** (UNCOMMITTED, code complete): user request
+   — bundle should start from one standout item + smaller fillers, with a
+   toggle. `BundleGenOptions { dominant?: boolean }` (default true);
+   `generateBundle` now routes to `dominantBundle` (top-5 sqrt(value)-weighted
+   anchor, one unit, fillers ≤50% of anchor sqrt(value)-weighted and never
+   past the window, anchor-first/value-desc line order, fallback = priciest
+   anchor + largest-first fill without the tier cap) or the previous mix
+   logic (`mixBundle`, behavior unchanged). Shared scoring extracted
+   (`trialScore`, `toLines`, `lineTotal`); `buildBundleAcrossGames` takes +
+   forwards `opts`. Both bundle routes read `body.dominant !== false`;
+   `BundleBuilder.tsx` checkbox "One dominant item" (default checked) sent on
+   generate + create. Nothing stored on the bundle. Probe now runs BOTH modes
+   with anchor stats: dominant 100% anchor-first / 100% ≤50%-tier / ~51%
+   anchor share; dup rules held everywhere.
 
 ## What We Did (previous session)
 
@@ -118,17 +138,18 @@ fill targets). The 10% bundle discount was committed this session as
 
 ## Current State
 
-- `origin/main` = `89ac676` (bundle discount, pushed). Working tree **dirty**:
-  the bundle-duplicates work is written but **uncommitted** (files below).
+- `origin/main` = `24de6a9` (bundle duplicates, pushed). Working tree **dirty**:
+  the dominant-anchor work is written but **uncommitted** (files below).
 - **Migration `0009` applied** (SQL editor by the user, this session). The
   price-history feature has not been browser-verified yet.
-- `typecheck` + `lint` pass (run after the bundle-duplicates change).
-  **Probe verified**: `npx tsx scripts/probe-bundle-dupes.ts` → dup rate
-  56–71%, 0 violations at fill targets $55.56/$111.11/$166.67. **`npm run
-  build` not run** — dev server is running in the user's foreground terminal;
-  building would clobber `.next/` and 500 every dynamic route.
-- Bundle discount + duplicates NOT browser-checked yet. No browser check of
-  price history either.
+- `typecheck` + `lint` pass (run after the dominant-anchor change).
+  **Probe verified**: `npx tsx scripts/probe-bundle-dupes.ts` → BOTH modes,
+  dup rate 56–71%, dominant 100% anchor-first / 100% filler-tier, 0 violations
+  at fill targets $55.56/$111.11/$166.67. **`npm run build` not run** — dev
+  server is running in the user's foreground terminal; building would
+  clobber `.next/` and 500 every dynamic route.
+- Bundle discount + duplicates + dominant toggle NOT browser-checked yet. No
+  browser check of price history either.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -157,22 +178,26 @@ fill targets). The 10% bundle discount was committed this session as
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = bundle duplicates only)
+## Files Changed (this session, UNCOMMITTED = dominant-anchor only)
 
-- `src/lib/bundle.ts` — `DUP_MAX_UNITS = 5`, `DUP_ELIGIBLE_VALUE_CENTS =
-  2000`, `PREFERRED_UNITS = 8`, `maxUnits(item)` (stock ∩ 5-cap ∩ $20 rule);
-  `generateBundle` rewritten: per-trial `remaining[]` budget enforced on all
-  add-paths + fallback, `sqrt(value) × sqrt(remaining)` draw weights,
-  units-based tie-break; the stock-blind draw + distinct-lines tie-break
-  (which suppressed duplicates) are gone.
-- `scripts/probe-bundle-dupes.ts` (new) — synthetic stock (cheap multi-copy /
-  $20+ with qty>1 / big pieces), prints dup rate, max qty, units/distinct/fill
-  averages; exits non-zero on any rule violation.
-- `AGENTS.md` — duplicate-rules bullet under Bundle generation.
+- `src/lib/bundle.ts` — `BundleGenOptions { dominant? }` (default true);
+  `generateBundle` routes to new `dominantBundle` (top-5 weighted anchor,
+  ≤50%-of-anchor fillers, anchor-first/value-desc order, anchor+greedy
+  fallback) or `mixBundle` (previous behavior, extracted); shared
+  `trialScore`/`toLines`/`lineTotal`; `buildBundleAcrossGames(..., opts)`.
+- `src/app/api/bundles/generate/route.ts`, `src/app/api/bundles/route.ts` —
+  `const dominant = body?.dominant !== false;` passed as `{ dominant }`.
+- `src/components/BundleBuilder.tsx` — `dominant` state (default true) +
+  "One dominant item" checkbox under Include kinds; flag sent on generate +
+  create.
+- `scripts/probe-bundle-dupes.ts` — runs both modes; keeps hard dup/cap
+  checks; adds dominant anchor stats (anchor-first %, fillers ≤50% %, avg
+  anchor share).
+- `AGENTS.md` — composition-modes bullet, probe/routes notes updated.
   `SESSION.md` — this file.
 
 (Committed earlier this session: `94528d0` price history, `89ac676` bundle
-discount — see "What We Did" items 4–5.)
+discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Files Changed (previous session)
 
@@ -224,11 +249,13 @@ discount — see "What We Did" items 4–5.)
 
 ## Problems / Blockers
 
-1. **Bundle discount + duplicates not browser-exercised yet** — discount:
-   generate a $100 preset → contents ≈ $111, price $100; create → detail/list
-   show price · value; CSV has both rows; an old bundle shows price = value ×
-   0.9. Duplicates: probe-verified (56–71% dup rate, 0 violations); eyeball
-   one real generate for `×N` lines on multi-copy under-$20 stock.
+1. **Bundle discount + duplicates + dominant toggle not browser-exercised
+   yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
+   create → detail/list show price · value; CSV has both rows; an old bundle
+   shows price = value × 0.9. Duplicates: probe-verified (56–71% dup rate, 0
+   violations); eyeball one real generate for `×N` lines on multi-copy
+   under-$20 stock. Dominant: default-checked bundle leads with the priciest
+   line; unchecking the box gives the old mix.
 2. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
 3. **Dashboard releases not visually checked in a browser** — code + probe
@@ -246,9 +273,9 @@ discount — see "What We Did" items 4–5.)
 
 ## Next Steps (priority order)
 
-1. Browser-verify the bundle discount + duplicates and the price history
-   sparkline (items under Problems 1–2).
-2. Commit/push the bundle-duplicates work when the user asks (files under
+1. Browser-verify the bundle discount + duplicates + dominant toggle and the
+   price history sparkline (items under Problems 1–2).
+2. Commit/push the dominant-anchor work when the user asks (files under
    Files Changed).
 3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement

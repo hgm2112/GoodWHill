@@ -75,44 +75,53 @@ function maxUnits(item: Item): number {
   return Math.min(stock, DUP_MAX_UNITS);
 }
 
-/**
- * Builds a random bundle from in-stock items summing to `targetCents` within
- * an absolute window (`toleranceCents`, default ±$15).
- *
- * Approach: repeated randomized trials. Each trial greedily draws items
- * (weight = value × remaining allowed units) until adding another item
- * would overshoot the window. The trial that lands closest to the target
- * (within tolerance) is returned; otherwise the closest under-fill is.
- *
- * Duplicates: items under $20 may repeat — up to `DUP_MAX_UNITS` of the same
- * product per bundle, bounded by stock; anything $20+ appears at most once.
- * Draws are weighted by remaining allowed units, so deep stock of a cheap
- * item naturally shows up as a ×N line while capped/exhausted items drop out.
- *
- * Slots carry the item itself and are indexed locally — never with a position
- * from the pre-filter array (that mix caused TypeErrors when expensive items
- * were filtered out).
- *
- * @param items items with quantity > 0 and value_cents > 0
- * @param targetCents desired bundle value
- * @param toleranceCents absolute tolerance in cents, e.g. 1500 for ±$15
- */
-export function generateBundle(
-  items: Item[],
+export interface BundleGenOptions {
+  /**
+   * Dominant-item composition (default `true`): the bundle is anchored on one
+   * of the priciest eligible items and filled only with items worth ≤ 50% of
+   * it, so one piece clearly dominates. `false` = plain weighted-random mix.
+   * The dup rules apply in both modes.
+   */
+  dominant?: boolean;
+}
+
+/** Score a trial's fill; null when outside the ±tolerance window. */
+function trialScore(
+  lines: Map<number, number>,
+  running: number,
   targetCents: number,
-  toleranceCents = BUNDLE_TOLERANCE_CENTS,
+  toleranceCents: number,
+): number | null {
+  if (Math.abs(running - targetCents) > toleranceCents) return null;
+  // Fill accuracy dominates; the units term only breaks ties between
+  // equally-good fills (it never prefers distinct lines over duplicates).
+  const units = [...lines.values()].reduce((sum, q) => sum + q, 0);
+  return Math.abs(running - targetCents) * 10_000 + Math.abs(units - PREFERRED_UNITS);
+}
+
+function toLines(map: Map<number, number>, eligible: Item[]): BundleLine[] {
+  return [...map.entries()].map(([index, quantity]) => ({
+    item: eligible[index],
+    quantity,
+    valueCents: eligible[index].value_cents!,
+  }));
+}
+
+function lineTotal(lines: BundleLine[]): number {
+  return lines.reduce((sum, l) => sum + l.valueCents * l.quantity, 0);
+}
+
+/**
+ * Plain mix: repeated randomized trials drawing value × remaining-stock
+ * weighted items until the fill window is reached; best-scoring trial wins.
+ */
+function mixBundle(
+  eligible: Item[],
+  targetCents: number,
+  toleranceCents: number,
+  rng: () => number,
 ): BundleResult {
-  const rng = mulberry32(Math.floor(Math.random() * 2 ** 31));
-
-  // Mystery bundles should hold several items: a single unit may not be worth
-  // more than ~60% of the target.
-  const eligible = items.filter(
-    (item) => item.quantity > 0 && (item.value_cents ?? 0) > 0 && item.value_cents! <= targetCents * 0.6,
-  );
-
-  if (!eligible.length) return { lines: [], totalCents: 0, targetCents };
-
-  let best: BundleLine[] | null = null;
+  let best: Map<number, number> | null = null;
   let bestScore = Infinity;
 
   for (let trial = 0; trial < 150; trial++) {
@@ -173,20 +182,10 @@ export function generateBundle(
       running += unit;
     }
 
-    // Only consider results within the absolute window (± toleranceCents).
-    if (Math.abs(running - targetCents) > toleranceCents) continue;
-
-    // Fill accuracy dominates; the units term only breaks ties between
-    // equally-good fills (it no longer prefers distinct lines over duplicates).
-    const units = [...lines.values()].reduce((sum, q) => sum + q, 0);
-    const score = Math.abs(running - targetCents) * 10_000 + Math.abs(units - PREFERRED_UNITS);
-    if (score < bestScore) {
+    const score = trialScore(lines, running, targetCents, toleranceCents);
+    if (score !== null && score < bestScore) {
       bestScore = score;
-      best = [...lines.entries()].map(([index, qty]) => ({
-        item: eligible[index],
-        quantity: qty,
-        valueCents: eligible[index].value_cents!,
-      }));
+      best = lines;
     }
   }
 
@@ -204,15 +203,170 @@ export function generateBundle(
       fallback.push({ item, quantity: perItem, valueCents: unit });
       fallbackRunning += perItem * unit;
     }
-    return {
-      lines: fallback,
-      totalCents: fallbackRunning,
-      targetCents,
-    };
+    return { lines: fallback, totalCents: fallbackRunning, targetCents };
   }
 
-  const total = best.reduce((sum, l) => sum + l.valueCents * l.quantity, 0);
-  return { lines: best, totalCents: total, targetCents };
+  const lines = toLines(best, eligible);
+  return { lines, totalCents: lineTotal(lines), targetCents };
+}
+
+/**
+ * Dominant-item composition: each trial anchors on one of the top-5 priciest
+ * eligible items (sqrt(value)-weighted so Regenerate cycles) and fills the
+ * rest ONLY with items worth ≤ 50% of that anchor, drawn sqrt(value)-weighted
+ * and never overshooting the window — one piece clearly dominates, the rest
+ * are its lower tier. Lines come back anchor-first, fillers value-descending.
+ * Fallback keeps the anchor but drops the tier cap (dup caps still apply).
+ */
+function dominantBundle(
+  eligible: Item[],
+  targetCents: number,
+  toleranceCents: number,
+  rng: () => number,
+): BundleResult {
+  const top = eligible
+    .map((_, index) => index)
+    .sort((a, b) => eligible[b].value_cents! - eligible[a].value_cents!)
+    .slice(0, 5);
+  const topWeight = top.reduce((sum, i) => sum + Math.sqrt(eligible[i].value_cents!), 0);
+
+  let best: Map<number, number> | null = null;
+  let bestAnchor = top[0];
+  let bestScore = Infinity;
+
+  for (let trial = 0; trial < 150; trial++) {
+    // Anchor: sqrt(value)-weighted draw from the priciest eligible items.
+    let pick = rng() * topWeight;
+    let anchorIndex = top[top.length - 1];
+    for (const i of top) {
+      pick -= Math.sqrt(eligible[i].value_cents!);
+      if (pick <= 0) {
+        anchorIndex = i;
+        break;
+      }
+    }
+
+    const lines = new Map<number, number>([[anchorIndex, 1]]);
+    const remaining = eligible.map((item) => maxUnits(item));
+    remaining[anchorIndex]--;
+    const tierCap = eligible[anchorIndex].value_cents! * 0.5;
+    let running = eligible[anchorIndex].value_cents!;
+    let safety = 0;
+
+    const fillerWeight = (i: number) => {
+      const v = eligible[i].value_cents!;
+      return remaining[i] > 0 && v <= tierCap && v <= targetCents + toleranceCents - running
+        ? Math.sqrt(v)
+        : 0;
+    };
+
+    while (running < targetCents && safety < 500) {
+      safety++;
+      let weightSum = 0;
+      for (let i = 0; i < eligible.length; i++) weightSum += fillerWeight(i);
+      if (weightSum <= 0) break; // no filler fits under the tier cap / room
+
+      let fpick = rng() * weightSum;
+      let idx = -1;
+      for (let i = 0; i < eligible.length; i++) {
+        const w = fillerWeight(i);
+        if (w <= 0) continue;
+        fpick -= w;
+        if (fpick <= 0) {
+          idx = i;
+          break;
+        }
+      }
+      if (idx < 0) break; // float drift
+
+      lines.set(idx, (lines.get(idx) ?? 0) + 1);
+      remaining[idx]--;
+      running += eligible[idx].value_cents!;
+    }
+
+    const score = trialScore(lines, running, targetCents, toleranceCents);
+    if (score !== null && score < bestScore) {
+      bestScore = score;
+      best = lines;
+      bestAnchor = anchorIndex;
+    }
+  }
+
+  // Fallback: priciest anchor + largest-first fill (tier cap dropped; caps stay).
+  if (!best) {
+    best = new Map<number, number>([[top[0], 1]]);
+    bestAnchor = top[0];
+    const remaining = eligible.map((item) => maxUnits(item));
+    remaining[top[0]]--;
+    let running = eligible[top[0]].value_cents!;
+    while (running < targetCents) {
+      const room = targetCents + toleranceCents - running;
+      let idx = -1;
+      let largest = -1;
+      for (let i = 0; i < eligible.length; i++) {
+        const v = eligible[i].value_cents!;
+        if (remaining[i] > 0 && v <= room && v > largest) {
+          largest = v;
+          idx = i;
+        }
+      }
+      if (idx < 0) break;
+      best.set(idx, (best.get(idx) ?? 0) + 1);
+      remaining[idx]--;
+      running += eligible[idx].value_cents!;
+    }
+  }
+
+  // Anchor line first, then fillers by value (desc).
+  const anchor = bestAnchor;
+  const ordered = new Map(
+    [...best.entries()].sort((a, b) => {
+      if (a[0] === anchor) return -1;
+      if (b[0] === anchor) return 1;
+      return eligible[b[0]].value_cents! - eligible[a[0]].value_cents!;
+    }),
+  );
+  const lines = toLines(ordered, eligible);
+  return { lines, totalCents: lineTotal(lines), targetCents };
+}
+
+/**
+ * Builds a random bundle from in-stock items summing to `targetCents` within
+ * an absolute window (`toleranceCents`, default ±$15).
+ *
+ * Two composition modes (see `BundleGenOptions`): dominant-item (default) —
+ * one priciest anchor + lower-tier fillers; or plain weighted-random mix.
+ *
+ * Duplicates (both modes): items under $20 may repeat — up to
+ * `DUP_MAX_UNITS` of the same product per bundle, bounded by stock; anything
+ * $20+ appears at most once.
+ *
+ * Slots carry the item itself and are indexed locally — never with a position
+ * from the pre-filter array (that mix caused TypeErrors when expensive items
+ * were filtered out).
+ *
+ * @param items items with quantity > 0 and value_cents > 0
+ * @param targetCents desired bundle value
+ * @param toleranceCents absolute tolerance in cents, e.g. 1500 for ±$15
+ */
+export function generateBundle(
+  items: Item[],
+  targetCents: number,
+  toleranceCents = BUNDLE_TOLERANCE_CENTS,
+  opts: BundleGenOptions = {},
+): BundleResult {
+  const rng = mulberry32(Math.floor(Math.random() * 2 ** 31));
+
+  // Mystery bundles should hold several items: a single unit may not be worth
+  // more than ~60% of the target.
+  const eligible = items.filter(
+    (item) => item.quantity > 0 && (item.value_cents ?? 0) > 0 && item.value_cents! <= targetCents * 0.6,
+  );
+
+  if (!eligible.length) return { lines: [], totalCents: 0, targetCents };
+
+  if (opts.dominant ?? true) return dominantBundle(eligible, targetCents, toleranceCents, rng);
+  return mixBundle(eligible, targetCents, toleranceCents, rng);
 }
 
 export interface GameBundleResult extends BundleResult {
@@ -226,6 +380,7 @@ export interface GameBundleResult extends BundleResult {
  * @param game specific game label to restrict to; `null`/`undefined` = "Any"
  *   (games are tried in random order and the first result landing inside the
  *   tolerance wins, else the closest).
+ * @param opts composition options forwarded to `generateBundle`
  * @returns null when no game could produce a non-empty bundle.
  */
 export function buildBundleAcrossGames(
@@ -233,6 +388,7 @@ export function buildBundleAcrossGames(
   targetCents: number,
   toleranceCents = BUNDLE_TOLERANCE_CENTS,
   game?: string | null,
+  opts: BundleGenOptions = {},
 ): GameBundleResult | null {
   const groups = new Map<string, { label: string; items: Item[] }>();
   for (const item of items) {
@@ -246,7 +402,7 @@ export function buildBundleAcrossGames(
   if (game != null) {
     const group = groups.get(game.trim().toLowerCase());
     if (!group) return null;
-    const result = generateBundle(group.items, targetCents, toleranceCents);
+    const result = generateBundle(group.items, targetCents, toleranceCents, opts);
     return result.lines.length ? { ...result, game: group.label } : null;
   }
 
@@ -258,7 +414,7 @@ export function buildBundleAcrossGames(
   }
   let closest: GameBundleResult | null = null;
   for (const group of order) {
-    const result = generateBundle(group.items, targetCents, toleranceCents);
+    const result = generateBundle(group.items, targetCents, toleranceCents, opts);
     if (!result.lines.length) continue;
     const candidate: GameBundleResult = { ...result, game: group.label };
     if (Math.abs(candidate.totalCents - targetCents) <= toleranceCents) return candidate;

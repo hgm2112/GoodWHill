@@ -226,18 +226,28 @@ Copy `.env.local.example` → `.env.local`. Keys:
 
 ## Bundle generation
 
-- `src/lib/bundle.ts` `generateBundle(items, targetCents, tolerance)` — seeded
-  RNG, ±$15 absolute window (`BUNDLE_TOLERANCE_CENTS`), falls back to
+- `src/lib/bundle.ts` `generateBundle(items, targetCents, tolerance, opts?)` —
+  seeded RNG, ±$15 absolute window (`BUNDLE_TOLERANCE_CENTS`), falls back to
   closest-under. The random seed comes from `Math.random()` per call, so
   "Regenerate" truly re-picks.
+- **Composition modes** (`BundleGenOptions.dominant`, default `true`):
+  **dominant** anchors each trial on one of the top-5 priciest eligible items
+  (sqrt(value)-weighted) and fills ONLY with items worth ≤ 50% of that anchor
+  (never overshooting the window); lines return **anchor-first, fillers
+  value-descending**, and the fallback keeps the anchor but drops the tier cap.
+  **`dominant: false`** = the plain value×stock random mix. Both bundle routes
+  take a `dominant` body flag (server default on); the builder checkbox "One
+  dominant item" sends it on generate + create. Generation-time only —
+  nothing stored on the bundle.
 - **Duplicates** (`maxUnits` in `bundle.ts`, per user rules): items under $20
   may repeat — max 5 of the same product per bundle, bounded by stock; items
   $20+ appear at most once. Draw weight = `sqrt(value) × sqrt(remaining
   allowed units)`, so deep cheap stock repeats naturally while capped/
   exhausted items drop out of the draw. The trial tie-break counts total
   units (soft ~8-piece preference), not distinct lines. Verify with
-  `npx tsx scripts/probe-bundle-dupes.ts` (prints dup rate + exits non-zero
-  on a rule violation).
+  `npx tsx scripts/probe-bundle-dupes.ts` — runs **both modes** (dup rate,
+  anchor-first / ≤50%-tier stats for dominant) and exits non-zero on a rule
+  violation.
 - **Internal 10% bundle discount** (`BUNDLE_DISCOUNT_PCT`): the wire
   `targetCents` is the bundle's SELLING PRICE; both bundle routes convert it
   via `contentsTargetForPrice` (`price ÷ 0.9` — a $100 bundle packs ~$111 of
@@ -250,7 +260,8 @@ Copy `.env.local.example` → `.env.local`. Keys:
   design) or anything else buyer-visible.
 - `POST /api/bundles/generate` returns a non-persisting preview (client shows
   it; calling again re-randomizes; response carries `priceCents` alongside the
-  fill `targetCents`). `POST /api/bundles` persists + reserves.
+  fill `targetCents`). `POST /api/bundles` persists + reserves. Both accept
+  `dominant` (boolean, default true).
 - `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
   and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
 

@@ -50,6 +50,7 @@ export async function POST(request: Request) {
     : [...BUNDLE_KINDS];
   const kinds = kindsRaw.filter((k) => VALID_KINDS.includes(k));
   const game = body?.game != null ? String(body.game).trim() : null;
+  const dominant = body?.dominant !== false; // default on
 
   const { data: items, error } = await supabase
     .from("items")
@@ -65,7 +66,7 @@ export async function POST(request: Request) {
 
   let result: GameBundleResult | null = null;
   try {
-    result = buildBundleAcrossGames(items as Item[], contentsTarget, undefined, game);
+    result = buildBundleAcrossGames(items as Item[], contentsTarget, undefined, game, { dominant });
   } catch {
     return apiError("Bundle generation failed", 500, { code: "GEN" });
   }
