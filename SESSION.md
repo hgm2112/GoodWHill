@@ -1,24 +1,29 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-24 (5th session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-25 (new day; prior 5 sessions were 2026-09-24). Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-**Dominant-anchor bundle composition** (code complete, typecheck/lint/probe
-green, **committed `7b6a1bf`, pushed**): `generateBundle` gained a
-toggleable composition mode (default ON): each bundle anchors on one of the
-top-5 priciest eligible items (sqrt(value)-weighted) and fills ONLY with
-items worth ≤50% of that anchor; lines return anchor-first, fillers
-value-desc. Unchecking the new builder checkbox ("One dominant item") sends
-`dominant: false` and falls back to the old plain random mix. No DB change —
-generation-time only. Probe-verified both modes (100% anchor-first, 100%
-filler-tier compliance, 0 dup-rule violations at $50/$100/$150 fill targets).
-Bundle duplicates shipped this session as `24de6a9`; discount as `89ac676`;
-price history as `94528d0` (migration `0009` applied by the user).
+**Inventory visibility** (code complete, typecheck/lint green, **UNCOMMITTED**
+— commit when the user asks): user rules — "paused items don't need to be
+hidden; just make it obvious that they are hidden" and "when something goes
+out of stock, just remove it". `GET /api/inventory` now returns ALL rows (the
+`includeInactive` param and every `.eq("active", true)` in its path are gone);
+the inventory grid always shows paused rows (red ring + artwork overlay
+"PAUSED · hidden from store") and hides `quantity = 0` rows behind a "Show out
+of stock (N)" toolbar toggle. Sale dropdown and bundle generation still
+exclude paused/sold-out rows themselves (user-confirmed: pause stays
+inventory-only). Two user questions answered via picker: recovery toggle
+chosen over literal permanent hiding; pause scope = inventory only.
 
 ## What We Did (this session)
+
+1. **Inventory visibility: paused always shown, sold-out hidden** (see
+   Current Objective — files under Files Changed).
+
+## What We Did (2026-09-24 sessions)
 
 1. **eBay multi-unit price filtering committed** (`cd862de`, pushed): QUANTITY/
    VARIANT pattern pools — see previous-session-style notes below.
@@ -138,19 +143,21 @@ price history as `94528d0` (migration `0009` applied by the user).
 
 ## Current State
 
-- `origin/main` = `7b6a1bf` (dominant-anchor mode, pushed). Working tree
-  **clean** — all this session's work (price history, discount, duplicates,
-  dominant anchor) is committed.
-- **Migration `0009` applied** (SQL editor by the user, this session). The
+- `origin/main` = `fb605ee` (SESSION refresh after `7b6a1bf` dominant-anchor,
+  pushed). Working tree **dirty**: the inventory-visibility work is written
+  but **uncommitted** (files below).
+- `typecheck` + `lint` pass (run after the inventory-visibility change).
+  **`npm run build` not run** — dev server is running in the user's
+  foreground terminal; building would clobber `.next/` and 500 every dynamic
+  route.
+- **Probe verified** dominant-anchor: `npx tsx scripts/probe-bundle-dupes.ts`
+  → BOTH modes, dup rate 56–71%, dominant 100% anchor-first / 100%
+  filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
+- **Migration `0009` applied** (SQL editor by the user, 2026-09-24). The
   price-history feature has not been browser-verified yet.
-- `typecheck` + `lint` pass (run after the dominant-anchor change).
-  **Probe verified**: `npx tsx scripts/probe-bundle-dupes.ts` → BOTH modes,
-  dup rate 56–71%, dominant 100% anchor-first / 100% filler-tier, 0 violations
-  at fill targets $55.56/$111.11/$166.67. **`npm run build` not run** — dev
-  server is running in the user's foreground terminal; building would
-  clobber `.next/` and 500 every dynamic route.
 - Bundle discount + duplicates + dominant toggle NOT browser-checked yet. No
-  browser check of price history either.
+  browser check of price history either. Inventory visibility (paused shown,
+  sold-out hidden) also not browser-checked yet.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -161,6 +168,10 @@ price history as `94528d0` (migration `0009` applied by the user).
 
 ## Decisions Made
 
+- **Inventory visibility (2026-09-25, user-confirmed via picker)**: sold-out
+  rows stay in the DB and are hidden behind a "Show out of stock (N)" toggle
+  (chosen over literal permanent hiding — rows must stay editable/restockable);
+  pause = inventory-only (sale dropdown + bundle gen still exclude paused).
 - **Bulk predicate = value/picture blank, not price_checked_at**: catches
   items that were checked but never priced, in line with the user's original
   wording ("don't have a price/picture"). Manual values protected per item
@@ -179,7 +190,25 @@ price history as `94528d0` (migration `0009` applied by the user).
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, committed as `7b6a1bf` = dominant-anchor)
+## Files Changed (this session, UNCOMMITTED = inventory visibility)
+
+- `src/app/(app)/inventory/page.tsx` — SSR query: dropped `.eq("active", true)`.
+- `src/app/api/inventory/route.ts` — GET returns all owner rows; removed the
+  `includeInactive` param + active filter (JSDoc updated).
+- `src/components/InventoryClient.tsx` — removed `showInactive`/“Show paused”
+  checkbox + `includeInactive` param; new `showZero` state, `zeroCount`
+  memo, `filtered` drops `quantity <= 0` unless toggled; toolbar "Show out of
+  stock (N)" checkbox (only when N > 0); paused card = red ring/border +
+  overlay subtitle "hidden from store"; legend line updated.
+- `src/app/(app)/sales/page.tsx` — sale-form item query adds
+  `.gt("quantity", 0)`.
+- `src/components/BundleBuilder.tsx` — game-label derivation filters
+  `active && quantity > 0` (GET is now unfiltered; server routes already
+  require it).
+- `AGENTS.md` — inventory-visibility bullet under API conventions.
+  `SESSION.md` — this file.
+
+## Files Changed (2026-09-24 sessions, committed `7b6a1bf` = dominant-anchor)
 
 - `src/lib/bundle.ts` — `BundleGenOptions { dominant? }` (default true);
   `generateBundle` routes to new `dominantBundle` (top-5 weighted anchor,
@@ -257,31 +286,39 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
    violations); eyeball one real generate for `×N` lines on multi-copy
    under-$20 stock. Dominant: default-checked bundle leads with the priciest
    line; unchecking the box gives the old mix.
-2. **Price history not browser-verified** (migration is in; check
+2. **Inventory visibility not browser-verified** — paused rows always shown
+   (red ring + "PAUSED · hidden from store" overlay, no more Show-paused
+   toggle); sold-out rows hidden unless "Show out of stock (N)" is checked
+   (revealed rows keep the red `×0`); sale dropdown no longer lists 0-stock
+   items.
+3. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
-3. **Dashboard releases not visually checked in a browser** — code + probe
+4. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-4. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+5. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-5. **`npm run build` not run this session** (blocked by the running dev server).
-6. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
+6. **`npm run build` not run this session** (blocked by the running dev server).
+7. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
    — browse_active already re-priced it; not backfilled (kinds other/used out
    of scope). Optional cleanup, ask the user.
-7. Marketplace Insights access still pending eBay approval.
-8. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+8. Marketplace Insights access still pending eBay approval.
+9. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Browser-verify the bundle discount + duplicates + dominant toggle and the
-   price history sparkline (items under Problems 1–2).
-2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+1. Browser-verify the inventory visibility rules (Problem 2), the bundle
+   discount + duplicates + dominant toggle, and the price history sparkline
+   (Problems 1–3).
+2. Commit/push the inventory-visibility work when the user asks (files under
+   Files Changed).
+3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-3. Optional: resolve Temur Roar's art (or accept the pack image).
-4. Stop dev → `npm run build` → confirm green → restart dev.
-5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+4. Optional: resolve Temur Roar's art (or accept the pack image).
+5. Stop dev → `npm run build` → confirm green → restart dev.
+6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget

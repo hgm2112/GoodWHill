@@ -59,7 +59,7 @@ export function InventoryClient({
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<ItemKind | "all">("all");
   const [locFilter, setLocFilter] = useState<LocFilter>("all");
-  const [showInactive, setShowInactive] = useState(false);
+  const [showZero, setShowZero] = useState(false);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -83,7 +83,6 @@ export function InventoryClient({
     setBusy(true);
     const params = new URLSearchParams();
     if (kind !== "all") params.set("kind", kind);
-    if (showInactive) params.set("includeInactive", "true");
     if (locFilter === "unassigned") {
       params.set("unassigned", "true");
     } else if (locFilter !== "all") {
@@ -96,23 +95,26 @@ export function InventoryClient({
     } finally {
       setBusy(false);
     }
-  }, [kind, q, locFilter, showInactive]);
+  }, [kind, q, locFilter]);
 
   useEffect(() => {
     const t = setTimeout(load, 300);
     return () => clearTimeout(t);
   }, [load]);
 
+  const zeroCount = useMemo(() => items.filter((i) => i.quantity === 0).length, [items]);
+
   const filtered = useMemo(() => {
     const query = q.trim().toLowerCase();
     return items.filter(
       (i) =>
-        !query ||
-        i.name.toLowerCase().includes(query) ||
-        (i.upc ?? "").includes(query) ||
-        (i.set_code ?? "").toLowerCase().includes(query),
+        (showZero || i.quantity > 0) &&
+        (!query ||
+          i.name.toLowerCase().includes(query) ||
+          (i.upc ?? "").includes(query) ||
+          (i.set_code ?? "").toLowerCase().includes(query)),
     );
-  }, [items, q]);
+  }, [items, q, showZero]);
 
   const summary = useMemo(() => {
     let value = 0;
@@ -414,14 +416,16 @@ export function InventoryClient({
         <button className="btn btn-ghost" onClick={() => setManageLocations((v) => !v)}>
           Locations
         </button>
-        <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
-          <input
-            type="checkbox"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />
-          Show paused
-        </label>
+        {zeroCount > 0 && (
+          <label className="ml-auto flex items-center gap-1.5 text-xs text-slate-500">
+            <input
+              type="checkbox"
+              checked={showZero}
+              onChange={(e) => setShowZero(e.target.checked)}
+            />
+            Show out of stock ({zeroCount})
+          </label>
+        )}
         <button className="btn btn-secondary" onClick={() => fileRef.current?.click()}>
           Import CSV
         </button>
@@ -550,7 +554,8 @@ export function InventoryClient({
       )}
 
       <p className="mt-4 text-center text-xs text-slate-400">
-        Hover the blue dots to see UPC codes · Green = currently active · Colored dots = product type
+        Hover the blue dots to see UPC codes · Green = currently active · Red PAUSED = hidden from
+        store · Colored dots = product type
       </p>
 
       {toast && (
@@ -648,7 +653,11 @@ function ItemCard({
   }, [item.name, item.notes]);
 
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div
+      className={`flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
+        item.active ? "border-slate-200" : "border-red-300 ring-1 ring-red-200"
+      }`}
+    >
       {/* Artwork */}
       <div className="relative aspect-square w-full bg-slate-100">
         {item.image_url ? (
@@ -671,8 +680,11 @@ function ItemCard({
         </span>
 
         {!item.active && (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-slate-900/70">
+          <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-slate-900/70">
             <span className="text-lg font-black uppercase tracking-widest text-red-400">Paused</span>
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-red-300">
+              hidden from store
+            </span>
           </div>
         )}
       </div>

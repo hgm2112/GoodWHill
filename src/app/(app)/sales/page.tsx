@@ -19,7 +19,13 @@ export default async function SalesPage() {
       .eq("owner_id", user.id)
       .order("sold_at", { ascending: false })
       .limit(500),
-    supabase.from("items").select("*").eq("owner_id", user.id).eq("active", true).order("name"),
+      supabase
+        .from("items")
+        .select("*")
+        .eq("owner_id", user.id)
+        .eq("active", true)
+        .gt("quantity", 0)
+        .order("name"),
     supabase
       .from("bundles")
       .select("*")

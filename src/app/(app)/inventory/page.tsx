@@ -17,7 +17,6 @@ export default async function InventoryPage() {
       .from("items")
       .select("*")
       .eq("owner_id", user.id)
-      .eq("active", true)
       .order("updated_at", { ascending: false }),
     supabase
       .from("item_price_history")

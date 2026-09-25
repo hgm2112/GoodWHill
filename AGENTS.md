@@ -115,6 +115,14 @@ Copy `.env.local.example` → `.env.local`. Keys:
     unpriced.
   - Quantity changes always create an `item_movements` row (reasons: add,
     remove, sale, reserve, release, adjust, import, return).
+  - Inventory visibility: `GET /api/inventory` returns ALL owner rows (no
+    `active`/`quantity` filter — the old `includeInactive` param is gone).
+    The inventory grid hides `quantity = 0` rows behind a "Show out of stock
+    (N)" toolbar toggle (revealed rows keep the red `×0` badge) and always
+    shows paused rows — red ring + artwork overlay "PAUSED · hidden from
+    store". Callers that care filter themselves: the sale-form dropdown and
+    both bundle routes require `active AND quantity > 0`, and the scan page
+    still shows out-of-stock rows (that's the restock signal).
   - Price changes always go through `recordPriceHistory`
     (`src/lib/price-history.ts`) on every `value_cents` write: refresh-price
     (single + bulk), `POST /api/inventory` (create), `PATCH /api/inventory/[id]`

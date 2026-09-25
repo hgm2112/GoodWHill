@@ -6,7 +6,7 @@ import { recordPriceHistory } from "@/lib/price-history";
 // Union of ITEM_KINDS for `.includes()` checks.
 const VALID_KINDS = ITEM_KINDS as readonly string[];
 
-/** GET /api/inventory?kind=&q=&location_id=&unassigned=&includeInactive= */
+/** GET /api/inventory?kind=&q=&location_id=&unassigned= */
 export async function GET(request: Request) {
   const auth = await authUser();
   if (!auth) return apiError("Unauthorized", 401);
@@ -17,8 +17,9 @@ export async function GET(request: Request) {
   const q = searchParams.get("q")?.trim();
   const locationId = searchParams.get("location_id");
   const unassigned = searchParams.get("unassigned") === "true";
-  const includeInactive = searchParams.get("includeInactive") === "true";
 
+  // Paused items are included: the inventory view shows them (marked), and
+  // callers that care (sale form, bundle generation) filter themselves.
   let query = supabase
     .from("items")
     .select("*")
@@ -26,7 +27,6 @@ export async function GET(request: Request) {
     .order("created_at", { ascending: false });
 
   if (kind && kind !== "all") query = query.eq("kind", kind);
-  if (!includeInactive) query = query.eq("active", true);
   if (unassigned) {
     query = query.is("location_id", null);
   } else if (locationId && locationId !== "all") {

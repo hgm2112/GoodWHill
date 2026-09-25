@@ -70,6 +70,9 @@ export function BundleBuilder() {
         if (!Array.isArray(data)) return;
         const seen = new Map<string, string>();
         for (const item of data as Item[]) {
+          // GET /api/inventory now includes paused + out-of-stock rows; the
+          // server eligibility query still requires active + quantity > 0.
+          if (!item.active || item.quantity <= 0) continue;
           const label = gameOf(item.category);
           if (!label) continue;
           const key = label.toLowerCase();
