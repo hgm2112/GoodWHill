@@ -1,18 +1,35 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-24. Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-24 (2nd session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-Sealed/open products should price and get box art from eBay even without a UPC,
-correctly per deck variant; the "Browse active" bulk button should fill prices
-and pictures for anything newly scanned; the UI (inventory header, nav, scan
-form) should match the user's requested layout and scan ergonomics. Keep the
-app deploy-ready (typecheck/lint green, pushed to `origin/main`).
+Ship the new **date acquired** field: editable in the item edit form, new scan
+rows stamp the scan date. Requires `0008_item_acquired_at.sql` to be applied
+first (no DB CLI access from here — user applies via Supabase SQL editor).
+Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## What We Did (this session)
+
+1. **eBay multi-unit price filtering committed** (`cd862de`, already pushed
+   before this session started): `QUANTITY_PATTERNS` ("6x"/"lot of"/"set of"/
+   "all N"/"case of"/"N decks") excluded from every product pool; variant-only
+   `VARIANT_MULTI_PATTERNS` ("box set"/"bundle"); `keepClean`/`keepMatching`
+   split; `searchActive` falls back to `keepClean` (never the raw GTIN pool).
+2. **Date acquired feature** (uncommitted at time of writing): new nullable
+   `items.acquired_at date` column (`0008_item_acquired_at.sql`, backfills
+   existing rows from `created_at::date`); ItemForm has a "Date acquired"
+   date input (defaults to local today on add, prefill on edit, null when
+   cleared); `POST /api/inventory` validates/accepts it (omitted → today UTC),
+   `PATCH /api/inventory/[id]` accepts it (fixes the "silently ignored field"
+   class of bug for this field only — quantity PATCH gap still open), scan
+   creates stamp `acquired_at` (ScanClient sends `localToday()`, server falls
+   back to UTC today). Helpers: `getDateOnly`/`todayDateOnly` in
+   `api-helper.ts`, `localToday()` in `utils.ts`.
+
+## What We Did (previous session)
 
 1. **`open` items priced like sealed** (`a4706e1`): the sealed-condition eBay
    pipeline now also runs for `open` kind items (they share the sealed UPC
@@ -62,11 +79,16 @@ app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## Current State
 
-- `origin/main` = `be0ef4a`. Working tree **clean**.
-- `typecheck` + `lint` pass. **`npm run build` not run this session** —
-  dev server is running in the user's foreground terminal (restarted ~20:55
-  2026-09-23, PID cluster starting at 45908/45909/45936); building would
-  clobber `.next/` and 500 every dynamic route.
+- `origin/main` = `cd862de` (eBay multi-unit filtering pushed). Working tree
+  **dirty**: the date-acquired feature is written but uncommitted.
+- **`0008_item_acquired_at.sql` NOT applied yet** (no psql/CLI here; user
+  applies in the Supabase SQL editor). Until it runs, every scan-create /
+  item-create / item-edit will 500 on the unknown `acquired_at` column —
+  verify with a REST probe (`select=id,acquired_at`) after the user applies.
+- `typecheck` + `lint` pass. **`npm run build` not run** — dev server is
+  running in the user's foreground terminal (PID cluster 56043/56044/56071,
+  started 16:24 on 2026-09-24); building would clobber `.next/` and 500 every
+  dynamic route.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -87,10 +109,34 @@ app deploy-ready (typecheck/lint green, pushed to `origin/main`).
   save).
 - **Quantity is not remembered** (user reversed the earlier request twice):
   default 1 on new scan, resets to 1 after add. No localStorage involved.
+- **Date acquired**: editable `YYYY-MM-DD` in the item form; scan-created rows
+  stamp the scanner's local date (client sends `localToday()`, server falls
+  back to UTC today); existing rows backfilled to `created_at::date`. In POST
+  /api/inventory: an explicit `null` (form cleared) stays null; a caller that
+  omits the field entirely gets today.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session)
+## Files Changed (this session, UNCOMMITTED)
+
+- `supabase/migrations/0008_item_acquired_at.sql` (new) — `acquired_at date`
+  on `items` + backfill from `created_at`. **Not applied to the DB yet.**
+- `src/lib/types.ts` — `Item.acquired_at: string | null`.
+- `src/lib/api-helper.ts` — `getDateOnly` (validates `YYYY-MM-DD`), `todayDateOnly`.
+- `src/lib/utils.ts` — `localToday()` (browser-local `YYYY-MM-DD`).
+- `src/components/ItemForm.tsx` — "Date acquired" `type="date"` input; new
+  items default to local today; cleared → null; sent as `acquired_at`.
+- `src/components/ScanClient.tsx` — both scan POSTs send
+  `acquired_at: localToday()`.
+- `src/app/api/inventory/route.ts` — POST validates/accepts `acquired_at`
+  (field omitted by an API caller → today UTC; explicit null stays null).
+- `src/app/api/inventory/[id]/route.ts` — PATCH handles `acquired_at`
+  (invalid format → 400; null clears).
+- `src/app/api/scan/route.ts` — item creation stamps
+  `getDateOnly(body.acquired_at) ?? todayDateOnly()`.
+- `AGENTS.md`, `SESSION.md` — docs.
+
+## Files Changed (previous session)
 
 - `src/lib/ebay/pricing.ts` — word-boundary matching; `matchingPool`,
   `pickBestImage`/`scoreTitle` exported; GTIN-first pools; `resolveNameImage`/
@@ -140,26 +186,32 @@ app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## Problems / Blockers
 
-1. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+1. **`0008_item_acquired_at.sql` not applied** — blocks all item inserts/edits
+   until the user runs it in the Supabase SQL editor. Apply, then probe
+   `select=id,acquired_at` on `/rest/v1/items` to confirm.
+2. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
-2. **`npm run build` not run this session** (blocked by the running dev server).
-3. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
+   (`acquired_at` now IS handled there; quantity still isn't.)
+3. **`npm run build` not run this session** (blocked by the running dev server).
+4. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
    — browse_active already re-priced it; not backfilled (kinds other/used out
    of scope). Optional cleanup, ask the user.
-4. Marketplace Insights access still pending eBay approval.
-5. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+5. Marketplace Insights access still pending eBay approval.
+6. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+1. **User applies `0008_item_acquired_at.sql`** (Supabase SQL editor), then
+   verify the column exists (REST probe) and that a scan + an edit save.
+2. Commit/push the date-acquired feature when the user asks (files listed
+   under Files Changed).
+3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-2. Optional: resolve Temur Roar's art (or accept the pack image).
-3. Stop dev → `npm run build` → confirm green → restart dev.
-4. Commit/push only when the user asks (they've asked after every change so
-   far this session).
-5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+4. Optional: resolve Temur Roar's art (or accept the pack image).
+5. Stop dev → `npm run build` → confirm green → restart dev.
+6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget

@@ -30,6 +30,7 @@ export interface Item {
   image_url: string | null;
   notes: string | null;
   location_id: string | null;
+  acquired_at: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;

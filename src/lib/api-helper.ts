@@ -47,6 +47,25 @@ export function getCents(value: unknown): number | null {
   return null;
 }
 
+/** Validated calendar date as `YYYY-MM-DD` (e.g. an acquired date), else null. */
+export function getDateOnly(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!m) return null;
+  const [, y, mo, d] = m;
+  const n = [Number(y), Number(mo) - 1, Number(d)];
+  const date = new Date(Date.UTC(n[0], n[1], n[2]));
+  if (date.getUTCFullYear() !== n[0] || date.getUTCMonth() !== n[1] || date.getUTCDate() !== n[2]) {
+    return null;
+  }
+  return `${y}-${mo}-${d}`;
+}
+
+/** Today's date as `YYYY-MM-DD` (UTC). */
+export function todayDateOnly(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export async function readJson(request: Request): Promise<Record<string, unknown>> {
   try {
     return (await request.json()) as Record<string, unknown>;

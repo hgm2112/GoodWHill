@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { CardSearchInput, type CardResult } from "@/components/CardSearchInput";
 import { NumberDollars } from "@/components/ui/Modal";
-import { KIND_OPTIONS, kindLabel } from "@/lib/utils";
+import { KIND_OPTIONS, kindLabel, localToday } from "@/lib/utils";
 import type { Item, ItemKind, Location } from "@/lib/types";
 
 interface Props {
@@ -27,6 +27,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
   const [imageUrl, setImageUrl] = useState(initial?.image_url ?? "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [locationId, setLocationId] = useState<string>(initial?.location_id ?? "");
+  const [acquiredAt, setAcquiredAt] = useState(initial?.acquired_at ?? (isEdit ? "" : localToday()));
   const [pickingCard, setPickingCard] = useState(!isEdit && defaultKind === "loose");
 
   const [busy, setBusy] = useState(false);
@@ -154,6 +155,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
       image_url: imageUrl.trim() || null,
       notes: notes.trim() || null,
       location_id: locationId || null,
+      acquired_at: /^\d{4}-\d{2}-\d{2}$/.test(acquiredAt) ? acquiredAt : null,
     };
     try {
       const res = isEdit
@@ -301,6 +303,21 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
         Value is what the item is worth (market resale) — used for{" "}
         {kind === "sealed" || kind === "open" ? "eBay autofill and " : ""}bundle building. Cost is what you paid.
       </p>
+
+      <div>
+        <label className="label">Date acquired</label>
+        <input
+          className="input"
+          type="date"
+          value={acquiredAt}
+          onChange={(e) => setAcquiredAt(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          {isEdit
+            ? "When you picked this item up — edit freely."
+            : "Defaults to today; scanned items stamp the scan date."}
+        </p>
+      </div>
 
       <div>
         <label className="label">Storage</label>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
-import { centsToUsd, formatDateTime, pluralize } from "@/lib/utils";
+import { centsToUsd, formatDateTime, localToday, pluralize } from "@/lib/utils";
 import type { Item, Location, ScanResult } from "@/lib/types";
 
 export function ScanClient() {
@@ -170,6 +170,7 @@ export function ScanClient() {
           delta: 1,
           location_id: row.location_id || null,
           name: row.name,
+          acquired_at: localToday(),
         }),
       });
       const data = await res.json();
@@ -242,6 +243,7 @@ export function ScanClient() {
           name: full,
           product_name: main,
           category: pickedCategory(),
+          acquired_at: localToday(),
         }),
       });
       const data = await res.json();

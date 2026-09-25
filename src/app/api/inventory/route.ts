@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authUser, apiError, getIntParam } from "@/lib/api-helper";
+import { authUser, apiError, getIntParam, getDateOnly, todayDateOnly } from "@/lib/api-helper";
 import { ITEM_KINDS, normalizeName } from "@/lib/utils";
 
 // Union of ITEM_KINDS for `.includes()` checks.
@@ -57,6 +57,10 @@ export async function POST(request: Request) {
     return apiError("Invalid kind");
   }
   const upc = body.upc ? String(body.upc).replace(/\D/g, "").slice(0, 32) : null;
+  const acquiredAt = getDateOnly(body.acquired_at);
+  if (body.acquired_at != null && !acquiredAt) {
+    return apiError("acquired_at must be a YYYY-MM-DD date");
+  }
 
   // Name-aware sealed duplicate check: products that share a UPC (e.g. Final
   // Fantasy commander decks) are separate rows keyed by name, so the same UPC
@@ -106,6 +110,9 @@ export async function POST(request: Request) {
     image_url: body.image_url ? String(body.image_url).trim() || null : null,
     notes: body.notes ? String(body.notes).trim() || null : null,
     active: body.active !== false,
+    // Explicit value wins (even null when the form cleared it); API callers
+    // that omit the field get today.
+    acquired_at: "acquired_at" in body ? acquiredAt : todayDateOnly(),
     location_id: null,
   };
 

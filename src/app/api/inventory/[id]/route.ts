@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authUser, apiError } from "@/lib/api-helper";
+import { authUser, apiError, getDateOnly } from "@/lib/api-helper";
 import { ITEM_KINDS, normalizeName } from "@/lib/utils";
 
 const VALID_KINDS = ITEM_KINDS as readonly string[];
@@ -44,6 +44,13 @@ export async function PATCH(request: Request, { params }: Params) {
   if ("image_url" in body)
     next.image_url = body.image_url ? String(body.image_url).trim() || null : null;
   if ("notes" in body) next.notes = body.notes ? String(body.notes).trim() || null : null;
+  if ("acquired_at" in body) {
+    const acquiredAt = getDateOnly(body.acquired_at);
+    if (body.acquired_at != null && !acquiredAt) {
+      return apiError("acquired_at must be a YYYY-MM-DD date");
+    }
+    next.acquired_at = acquiredAt;
+  }
   if ("active" in body) next.active = body.active !== false;
   if ("location_id" in body) {
     const value = body.location_id ? String(body.location_id) : null;

@@ -67,10 +67,13 @@ Copy `.env.local.example` → `.env.local`. Keys:
     idempotent when adding edits (add new `0002_*.sql` files, don't rewrite
     0001). Note: `0007_item_kinds_v2.sql` REMAPS the `item_kind` enum to
     `sealed | loose | open | used | other` (was sealed/bulk_cards/other);
-    apply it before deploying code that sends `loose`.
+    apply it before deploying code that sends `loose`. `0008_item_acquired_at.sql`
+    adds `items.acquired_at` (date) + backfills from `created_at`; apply before
+    deploying the date-acquired edit/scan code (inserts reference the column).
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
-    `value_cents`, cached eBay price columns), `item_movements` (ledger, one
+    `value_cents`, `acquired_at` date (editable in the item form; scan-created
+    rows stamp the scan date), cached eBay price columns), `item_movements` (ledger, one
     row per quantity change with a `reason`), `bundles`/`bundle_items`,
     `allocations` (reserved stock), `listing_drafts`, `sales`, `listings`
     (synced eBay listings), `locations` (named storage boxes; `items` and

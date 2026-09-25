@@ -42,6 +42,14 @@ export function pluralize(count: number, singular: string, plural?: string): str
   return `${count} ${count === 1 ? singular : plural ?? singular + "s"}`;
 }
 
+/** Today's date in the browser's local timezone as YYYY-MM-DD. */
+export function localToday(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
+
 /** Matches the items_upc_loc_name_unique index semantics (lower(trim(name))). */
 export function normalizeName(name: string): string {
   return name.trim().toLowerCase();

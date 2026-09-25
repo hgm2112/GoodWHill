@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { authUser, apiError, getIntParam } from "@/lib/api-helper";
+import { authUser, apiError, getIntParam, getDateOnly, todayDateOnly } from "@/lib/api-helper";
 import { normalizeName } from "@/lib/utils";
 
 /**
@@ -204,6 +204,9 @@ export async function POST(request: Request) {
         quantity: 0,
         active: true,
         category: category || "MTG Sealed",
+        // New rows stamp the scan date (client sends its local date; server
+        // falls back to today UTC when the field is missing/invalid).
+        acquired_at: getDateOnly(body?.acquired_at) ?? todayDateOnly(),
       })
       .select()
       .single();
