@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { centsToUsd, formatDateTime, truncated } from "@/lib/utils";
+import { fetchUpcomingReleases, type UpcomingRelease } from "@/lib/releases";
 
 async function loadDashboard() {
   const supabase = await createClient();
@@ -33,16 +34,14 @@ async function loadDashboard() {
 }
 
 export default async function DashboardPage() {
-  const d = await loadDashboard();
+  const [d, releases] = await Promise.all([loadDashboard(), fetchUpcomingReleases()]);
 
   let value = 0;
   let units = 0;
-  const lowStock: typeof d.items = [];
   for (const i of d.items) {
     const v = (i.value_cents ?? 0) * i.quantity;
     value += v;
     units += i.quantity;
-    if (i.active && i.quantity > 0 && i.quantity <= 2) lowStock.push(i);
   }
 
   const net = d.sales.reduce((a, s) => a + (s.net_cents ?? 0), 0);
@@ -92,27 +91,38 @@ export default async function DashboardPage() {
 
         <section className="card p-0">
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
-            <h2 className="text-sm font-bold">Low stock (≤2)</h2>
-            <Link href="/inventory" className="text-xs text-indigo-600 hover:underline">
-              Inventory →
-            </Link>
+            <h2 className="text-sm font-bold">Upcoming releases</h2>
           </div>
-          {lowStock.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-slate-500">Nothing running low right now.</p>
+          {releases.releases.length === 0 ? (
+            <p className="px-4 py-6 text-sm text-slate-500">
+              {releases.errors.length
+                ? "Couldn't load the release calendars right now."
+                : "No upcoming releases listed yet."}
+            </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {lowStock.slice(0, 8).map((i) => (
-                <li key={i.id} className="flex items-center justify-between px-4 py-2.5">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{truncated(i.name, 48)}</span>
-                    <span className="block text-xs text-slate-400">
-                      {i.set_code ? `${i.set_code} · ` : ""}value {centsToUsd(i.value_cents)}
-                    </span>
+              {releases.releases.slice(0, 8).map((r) => (
+                <li key={`${r.game}-${r.name}`} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="w-14 shrink-0 text-xs font-semibold text-slate-500">
+                    {r.date ? shortReleaseDate(r.date) : "TBA"}
                   </span>
-                  <span className="text-sm font-bold text-amber-600">{i.quantity} left</span>
+                  <a
+                    href={r.url ?? "#"}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="min-w-0 flex-1 truncate text-sm font-medium text-indigo-600 hover:underline"
+                  >
+                    {truncated(r.name, 52)}
+                  </a>
+                  <span className={releaseBadge(r)}>{r.label}</span>
                 </li>
               ))}
             </ul>
+          )}
+          {releases.errors.length > 0 && releases.releases.length > 0 && (
+            <p className="border-t border-slate-100 px-4 py-2 text-xs text-slate-400">
+              One of the release calendars didn&apos;t load — showing partial results.
+            </p>
           )}
 
           <div className="border-t border-slate-100 px-4 py-2.5">
@@ -150,4 +160,26 @@ function Stat({ label, value, sub, link }: { label: string; value: string; sub?:
     </div>
   );
   return link ? <Link href={link}>{body}</Link> : body;
+}
+
+const RELEASE_MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/**
+ * "Oct 2" from a YYYY-MM-DD string. Parses the parts directly — `new Date(iso)`
+ * would read UTC midnight and show the previous day in US timezones.
+ * Shows the year when it isn't the current one.
+ */
+function shortReleaseDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const label = `${RELEASE_MONTHS[m - 1]} ${d}`;
+  return y === new Date().getFullYear() ? label : `${label} ${y}`;
+}
+
+function releaseBadge(r: UpcomingRelease): string {
+  if (r.label === "Secret Lair") return "badge badge-purple";
+  if (r.game === "pokemon") return "badge badge-amber";
+  return "badge badge-indigo";
 }

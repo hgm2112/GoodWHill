@@ -193,6 +193,17 @@ Copy `.env.local.example` → `.env.local`. Keys:
 - Single cards have no standard barcodes — do NOT attempt OCR. Only sealed
   product barcodes are scanned (`/api/scan`, `src/components/BarcodeScanner.tsx`).
 
+## Release calendars
+
+- `src/lib/releases.ts` `fetchUpcomingReleases()` powers the dashboard's
+  "Upcoming releases" card: MTG (incl. Secret Lair) from mtg.wiki's
+  `Category:Upcoming_releases` MediaWiki API (keeps `Infobox set` pages, drops
+  subpages/books; undated pages show as TBA), and Pokémon from the official
+  `press.pokemon.com` schedule table (regex-parsed HTML). Merged, dated rows
+  ascending then TBA; each source in try/catch (partial results + `errors[]`);
+  6h in-memory cache (5 min when empty). Never throws — dashboard degrades to
+  an empty-state message. `scripts/probe-releases.ts` prints the parsed list.
+
 ## Bundle generation
 
 - `src/lib/bundle.ts` `generateBundle(items, targetCents, tolerance)` — seeded

@@ -1,33 +1,43 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-24 (2nd session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-24 (3rd session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-Ship the new **date acquired** field: editable in the item edit form, new scan
-rows stamp the scan date. Requires `0008_item_acquired_at.sql` to be applied
-first (no DB CLI access from here — user applies via Supabase SQL editor).
-Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
+**Dashboard "Upcoming releases"** (in progress, code complete & verified):
+replaced the "Low stock (≤2)" card block with a merged MTG (incl. Secret Lair)
++ Pokémon future-releases list. Typecheck/lint green; **uncommitted** — commit
+when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
+`origin/main`).
 
 ## What We Did (this session)
 
-1. **eBay multi-unit price filtering committed** (`cd862de`, already pushed
-   before this session started): `QUANTITY_PATTERNS` ("6x"/"lot of"/"set of"/
-   "all N"/"case of"/"N decks") excluded from every product pool; variant-only
-   `VARIANT_MULTI_PATTERNS` ("box set"/"bundle"); `keepClean`/`keepMatching`
-   split; `searchActive` falls back to `keepClean` (never the raw GTIN pool).
-2. **Date acquired feature** (uncommitted at time of writing): new nullable
-   `items.acquired_at date` column (`0008_item_acquired_at.sql`, backfills
-   existing rows from `created_at::date`); ItemForm has a "Date acquired"
-   date input (defaults to local today on add, prefill on edit, null when
-   cleared); `POST /api/inventory` validates/accepts it (omitted → today UTC),
-   `PATCH /api/inventory/[id]` accepts it (fixes the "silently ignored field"
-   class of bug for this field only — quantity PATCH gap still open), scan
-   creates stamp `acquired_at` (ScanClient sends `localToday()`, server falls
-   back to UTC today). Helpers: `getDateOnly`/`todayDateOnly` in
-   `api-helper.ts`, `localToday()` in `utils.ts`.
+1. **eBay multi-unit price filtering committed** (`cd862de`, pushed): QUANTITY/
+   VARIANT pattern pools — see previous-session-style notes below.
+2. **Date acquired feature shipped** (`6b08b6d`, pushed): nullable
+   `items.acquired_at date` (`0008_item_acquired_at.sql` — **applied by the user
+   in the SQL editor, verified via REST**: column exists, all rows backfilled,
+   0 nulls); ItemForm "Date acquired" input (local-today default on add, edit
+   prefill, null clears); POST/PATCH inventory accept + validate `YYYY-MM-DD`
+   (`getDateOnly`/`todayDateOnly` in `api-helper.ts`, `localToday()` in
+   `utils.ts`); scan creates stamp the scanner's local date (ScanClient sends
+   it, server falls back to UTC). The quantity PATCH gap remains open.
+3. **Dashboard upcoming releases** (UNCOMMITTED): removed the "Low stock (≤2)"
+   block + `lowStock` computation from `src/app/(app)/page.tsx`; new
+   "Upcoming releases" list in its place (date column · linked name · badge
+   MTG/Secret Lair/Pokémon, `slice(0, 8)`, dated asc then TBA, empty/error/
+   partial states), "Reserved in bundles" kept below per the user. New
+   `src/lib/releases.ts` (`fetchUpcomingReleases()`, never throws): MTG from
+   mtg.wiki `Category:Upcoming_releases` MediaWiki API (Infobox set only,
+   `/`-subpages and books dropped, `{{start date and age}}` + plain-text date
+   fallback), Pokémon from `press.pokemon.com` schedule table (regex parse,
+   entity-decoded); parallel, per-source try/catch → `{releases, errors[]}`;
+   6h in-memory cache (5 min when empty). Verified live via
+   `npx tsx scripts/probe-releases.ts`: **13 rows, 0 errors** (Reality
+   Fracture Oct 2 → Kamigawa Jun 2027, Delta Reign Nov 6, both Secret Lairs
+   TBA).
 
 ## What We Did (previous session)
 
@@ -79,16 +89,17 @@ Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## Current State
 
-- `origin/main` = `cd862de` (eBay multi-unit filtering pushed). Working tree
-  **dirty**: the date-acquired feature is written but uncommitted.
-- **`0008_item_acquired_at.sql` NOT applied yet** (no psql/CLI here; user
-  applies in the Supabase SQL editor). Until it runs, every scan-create /
-  item-create / item-edit will 500 on the unknown `acquired_at` column —
-  verify with a REST probe (`select=id,acquired_at`) after the user applies.
-- `typecheck` + `lint` pass. **`npm run build` not run** — dev server is
-  running in the user's foreground terminal (PID cluster 56043/56044/56071,
-  started 16:24 on 2026-09-24); building would clobber `.next/` and 500 every
-  dynamic route.
+- `origin/main` = `6b08b6d` (date acquired, pushed). Working tree **dirty**:
+  dashboard upcoming-releases work is written but **uncommitted** (files below).
+- **Migration `0008` applied & verified** (SQL editor by the user; REST probe
+  confirmed the column + full backfill, 0 nulls).
+- `typecheck` + `lint` pass (run after the releases change). Probe
+  `npx tsx scripts/probe-releases.ts` → 13 rows, 0 errors. **`npm run build`
+  not run** — dev server is running in the user's foreground terminal (PID
+  cluster 56043/56044/56071, started 16:24 on 2026-09-24); building would
+  clobber `.next/` and 500 every dynamic route.
+- Dashboard was NOT visually checked in a browser yet (needs the user) —
+  code + probe verified only.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -117,24 +128,19 @@ Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED)
+## Files Changed (this session, UNCOMMITTED = dashboard releases only)
 
-- `supabase/migrations/0008_item_acquired_at.sql` (new) — `acquired_at date`
-  on `items` + backfill from `created_at`. **Not applied to the DB yet.**
-- `src/lib/types.ts` — `Item.acquired_at: string | null`.
-- `src/lib/api-helper.ts` — `getDateOnly` (validates `YYYY-MM-DD`), `todayDateOnly`.
-- `src/lib/utils.ts` — `localToday()` (browser-local `YYYY-MM-DD`).
-- `src/components/ItemForm.tsx` — "Date acquired" `type="date"` input; new
-  items default to local today; cleared → null; sent as `acquired_at`.
-- `src/components/ScanClient.tsx` — both scan POSTs send
-  `acquired_at: localToday()`.
-- `src/app/api/inventory/route.ts` — POST validates/accepts `acquired_at`
-  (field omitted by an API caller → today UTC; explicit null stays null).
-- `src/app/api/inventory/[id]/route.ts` — PATCH handles `acquired_at`
-  (invalid format → 400; null clears).
-- `src/app/api/scan/route.ts` — item creation stamps
-  `getDateOnly(body.acquired_at) ?? todayDateOnly()`.
-- `AGENTS.md`, `SESSION.md` — docs.
+- `src/lib/releases.ts` (new) — `fetchUpcomingReleases()`: mtg.wiki
+  Upcoming-releases category + press.pokemon.com schedule table; 6h cache,
+  per-source try/catch, never throws.
+- `src/app/(app)/page.tsx` — removed "Low stock (≤2)" block + `lowStock`
+  computation; added "Upcoming releases" list (badged rows, links, states) +
+  `shortReleaseDate`/`releaseBadge` helpers; "Reserved in bundles" kept below.
+- `scripts/probe-releases.ts` (new) — prints the parsed release list.
+- `AGENTS.md` — new "Release calendars" section. `SESSION.md` — this file.
+
+(Committed earlier this session as `6b08b6d`: date-acquired feature — see
+"What We Did" item 2 for the file list.)
 
 ## Files Changed (previous session)
 
@@ -186,9 +192,8 @@ Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## Problems / Blockers
 
-1. **`0008_item_acquired_at.sql` not applied** — blocks all item inserts/edits
-   until the user runs it in the Supabase SQL editor. Apply, then probe
-   `select=id,acquired_at` on `/rest/v1/items` to confirm.
+1. **Dashboard releases not visually checked in a browser** — code + probe
+   verified; ask the user to load the dashboard.
 2. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
@@ -202,23 +207,21 @@ Keep the app deploy-ready (typecheck/lint green, pushed to `origin/main`).
 
 ## Next Steps (priority order)
 
-1. **User applies `0008_item_acquired_at.sql`** (Supabase SQL editor), then
-   verify the column exists (REST probe) and that a scan + an edit save.
-2. Commit/push the date-acquired feature when the user asks (files listed
-   under Files Changed).
-3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+1. Commit/push the dashboard upcoming-releases work when the user asks
+   (files under Files Changed). Have the user eyeball the dashboard first.
+2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-4. Optional: resolve Temur Roar's art (or accept the pack image).
-5. Stop dev → `npm run build` → confirm green → restart dev.
-6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+3. Optional: resolve Temur Roar's art (or accept the pack image).
+4. Stop dev → `npm run build` → confirm green → restart dev.
+5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
 
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
-- Don't rewrite migrations `0001`–`0007`; add `0008_*.sql` (keep idempotent).
+- Don't rewrite migrations `0001`–`0008`; add the next `0009_*.sql` (keep idempotent).
 - Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
   `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
 - Split card names on **last `:`** for the bold sub-name display.
