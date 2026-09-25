@@ -1,16 +1,18 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-24 (3rd session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-24 (4th session same day). Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-**Dashboard "Upcoming releases"** (in progress, code complete & verified):
-replaced the "Low stock (≤2)" card block with a merged MTG (incl. Secret Lair)
-+ Pokémon future-releases list. Typecheck/lint green; **uncommitted** — commit
-when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
-`origin/main`).
+**Item price history** (code complete, typecheck/lint green, **UNCOMMITTED** —
+commit when the user asks): per-item `value_cents` time series recorded on
+every value write (refresh, manual edit, create, CSV import), shown as a
+sparkline under the card value + a full chart modal. **Migration
+`0009_item_price_history.sql` is NOT applied yet** — the user must run it in
+the SQL editor before the feature shows data (writes degrade to warnings until
+then). The dashboard releases work was committed this session as `ba77fba`.
 
 ## What We Did (this session)
 
@@ -24,7 +26,7 @@ when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
    (`getDateOnly`/`todayDateOnly` in `api-helper.ts`, `localToday()` in
    `utils.ts`); scan creates stamp the scanner's local date (ScanClient sends
    it, server falls back to UTC). The quantity PATCH gap remains open.
-3. **Dashboard upcoming releases** (UNCOMMITTED): removed the "Low stock (≤2)"
+3. **Dashboard upcoming releases committed** (`ba77fba`, pushed): removed the "Low stock (≤2)"
    block + `lowStock` computation from `src/app/(app)/page.tsx`; new
    "Upcoming releases" list in its place (date column · linked name · badge
    MTG/Secret Lair/Pokémon, `slice(0, 8)`, dated asc then TBA, empty/error/
@@ -38,6 +40,13 @@ when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
    `npx tsx scripts/probe-releases.ts`: **13 rows, 0 errors** (Reality
    Fracture Oct 2 → Kamigawa Jun 2027, Delta Reign Nov 6, both Secret Lairs
    TBA).
+4. **Item price history** (UNCOMMITTED, code complete): see "Files Changed
+   (this session, UNCOMMITTED)" below for the full list. Decisions the user
+   made for it: record on refresh **and** manual edits; record **only on
+   change** (first snapshot = baseline; identical value → no row); UI = card
+   sparkline + detail modal. `recordPriceHistory` (`src/lib/price-history.ts`)
+   never throws — missing table (pre-migration) just warns, so the rest of the
+   app keeps working. Migration numbered `0009` (0009-for-sales never existed).
 
 ## What We Did (previous session)
 
@@ -89,17 +98,18 @@ when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
 
 ## Current State
 
-- `origin/main` = `6b08b6d` (date acquired, pushed). Working tree **dirty**:
-  dashboard upcoming-releases work is written but **uncommitted** (files below).
-- **Migration `0008` applied & verified** (SQL editor by the user; REST probe
-  confirmed the column + full backfill, 0 nulls).
-- `typecheck` + `lint` pass (run after the releases change). Probe
-  `npx tsx scripts/probe-releases.ts` → 13 rows, 0 errors. **`npm run build`
-  not run** — dev server is running in the user's foreground terminal (PID
-  cluster 56043/56044/56071, started 16:24 on 2026-09-24); building would
-  clobber `.next/` and 500 every dynamic route.
-- Dashboard was NOT visually checked in a browser yet (needs the user) —
-  code + probe verified only.
+- `origin/main` = `ba77fba` (dashboard releases, pushed). Working tree **dirty**:
+  the price-history feature is written but **uncommitted** (files below).
+- **Migration `0009` NOT applied** — user still has to run
+  `supabase/migrations/0009_item_price_history.sql` in the SQL editor (no
+  psql/supabase CLI on this machine). Until then `recordPriceHistory` warns +
+  skips, `GET /api/inventory/[id]/price-history` 500s (modal shows its error
+  state); nothing else breaks. `0008` applied & verified earlier.
+- `typecheck` + `lint` pass (run after the price-history change). **`npm run
+  build` not run** — dev server is running in the user's foreground terminal;
+  building would clobber `.next/` and 500 every dynamic route.
+- Price history NOT exercised against the DB yet (blocked on migration 0009);
+  no browser check done either.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -128,19 +138,42 @@ when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = dashboard releases only)
+## Files Changed (this session, UNCOMMITTED = price history only)
 
-- `src/lib/releases.ts` (new) — `fetchUpcomingReleases()`: mtg.wiki
-  Upcoming-releases category + press.pokemon.com schedule table; 6h cache,
-  per-source try/catch, never throws.
-- `src/app/(app)/page.tsx` — removed "Low stock (≤2)" block + `lowStock`
-  computation; added "Upcoming releases" list (badged rows, links, states) +
-  `shortReleaseDate`/`releaseBadge` helpers; "Reserved in bundles" kept below.
-- `scripts/probe-releases.ts` (new) — prints the parsed release list.
-- `AGENTS.md` — new "Release calendars" section. `SESSION.md` — this file.
-
-(Committed earlier this session as `6b08b6d`: date-acquired feature — see
-"What We Did" item 2 for the file list.)
+- `supabase/migrations/0009_item_price_history.sql` (new) — `item_price_history`
+  (id, owner_id, item_id FK cascade, value_cents, price_source default
+  `manual`, created_at) + `(item_id, created_at desc)` index + owner RLS +
+  grants. Idempotent. **Not applied yet.**
+- `src/lib/price-history.ts` (new) — `recordPriceHistory(supabase, {ownerId,
+  itemId, valueCents, priceSource})`: skips null values and no-change
+  snapshots (latest = `created_at desc, id desc`), baseline when no snapshot
+  exists, try/catch → warns + returns null, never throws.
+- `src/lib/types.ts` — `PriceHistoryPoint` interface.
+- `src/app/api/inventory/refresh-price/route.ts` — records on single (returns
+  `historyPoint`) + bulk (`historyPoints[]`), using the *effective* value
+  (`update.value_cents ?? item.value_cents` — covers `withoutManualValue`
+  strips so manual items get a baseline).
+- `src/app/api/inventory/route.ts` — baseline on create-with-value.
+- `src/app/api/inventory/[id]/route.ts` — records when `"value_cents" in
+  next`, returns `historyPoint`.
+- `src/app/api/inventory/import/route.ts` — baseline per created row with a
+  value.
+- `src/app/api/inventory/[id]/price-history/route.ts` (new) — GET, asc, limit
+  500, `{ points: [...] }`.
+- `src/app/(app)/inventory/page.tsx` — Promise.all items + history queries
+  (limit 5000, grouped by item_id) → `initialHistory` prop.
+- `src/components/PriceHistoryModal.tsx` (new) — `Sparkline` (≥2 points,
+  emerald/red tint), `HistoryChart` (hand-rolled SVG line + dots + date
+  axis), `PriceHistoryModal` (Current/Min/Max/Change stats, chart, last-10
+  table with per-row Δ + source labels).
+- `src/components/InventoryClient.tsx` — `history`/`historyItem` state,
+  `fetchHistory()`, refresh/save hooks (single refresh + ItemForm `onSaved`
+  refetch; bulk appends `historyPoints`), ItemCard props, "Price history"
+  `IconBtn` (after Refresh price), `<Sparkline>` under the card value,
+  `<PriceHistoryModal>` (derives the fresh item from `items` while open).
+- `AGENTS.md` — migration note, `item_price_history` table bullet, "Price
+  changes always go through `recordPriceHistory`" money-path bullet.
+  `SESSION.md` — this file.
 
 ## Files Changed (previous session)
 
@@ -192,36 +225,45 @@ when the user asks. Keep the app deploy-ready (typecheck/lint green, pushed to
 
 ## Problems / Blockers
 
-1. **Dashboard releases not visually checked in a browser** — code + probe
+1. **Migration `0009` not applied** — no psql/supabase CLI here, so the user
+   must run it in the SQL editor. Until then: no snapshots recorded, the
+   history endpoint 500s (modal error state only).
+2. **Price history not yet exercised** (DB write + sparkline/modal render) —
+   blocked on 1; verify after: create-with-value baseline, refresh change →
+   row, refresh same price → no row, manual edit → row.
+3. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-2. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+4. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-3. **`npm run build` not run this session** (blocked by the running dev server).
-4. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
+5. **`npm run build` not run this session** (blocked by the running dev server).
+6. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
    — browse_active already re-priced it; not backfilled (kinds other/used out
    of scope). Optional cleanup, ask the user.
-5. Marketplace Insights access still pending eBay approval.
-6. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+7. Marketplace Insights access still pending eBay approval.
+8. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Commit/push the dashboard upcoming-releases work when the user asks
-   (files under Files Changed). Have the user eyeball the dashboard first.
-2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+1. User runs `0009_item_price_history.sql` in the Supabase SQL editor; then
+   verify the flow (baseline on create, refresh change, no-op on same price,
+   manual edit, sparkline + modal in the browser).
+2. Commit/push the price-history work when the user asks (files under Files
+   Changed).
+3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-3. Optional: resolve Temur Roar's art (or accept the pack image).
-4. Stop dev → `npm run build` → confirm green → restart dev.
-5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+4. Optional: resolve Temur Roar's art (or accept the pack image).
+5. Stop dev → `npm run build` → confirm green → restart dev.
+6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
 
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
-- Don't rewrite migrations `0001`–`0008`; add the next `0009_*.sql` (keep idempotent).
+- Don't rewrite migrations `0001`–`0009`; add the next `0010_*.sql` (keep idempotent).
 - Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
   `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
 - Split card names on **last `:`** for the bold sub-name display.

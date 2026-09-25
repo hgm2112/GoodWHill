@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
 import { ArtworkThumb } from "@/components/ArtworkThumb";
 import { ItemForm } from "@/components/ItemForm";
+import { PriceHistoryModal, Sparkline } from "@/components/PriceHistoryModal";
 import {
   centsToUsd,
   downloadTextFile,
@@ -13,7 +14,7 @@ import {
   truncated,
   toCsv,
 } from "@/lib/utils";
-import type { Item, ItemKind, Location } from "@/lib/types";
+import type { Item, ItemKind, Location, PriceHistoryPoint } from "@/lib/types";
 
 const KINDS: Array<ItemKind | "all"> = ["all", ...ITEM_KINDS];
 
@@ -45,8 +46,16 @@ const KIND_PLACEHOLDER: Record<ItemKind, string> = {
   other: "bg-slate-100 text-slate-500",
 };
 
-export function InventoryClient({ initial }: { initial: Item[] }) {
+export function InventoryClient({
+  initial,
+  initialHistory,
+}: {
+  initial: Item[];
+  initialHistory: Record<string, PriceHistoryPoint[]>;
+}) {
   const [items, setItems] = useState<Item[]>(initial);
+  const [history, setHistory] = useState<Record<string, PriceHistoryPoint[]>>(initialHistory);
+  const [historyItem, setHistoryItem] = useState<Item | null>(null);
   const [q, setQ] = useState("");
   const [kind, setKind] = useState<ItemKind | "all">("all");
   const [locFilter, setLocFilter] = useState<LocFilter>("all");
@@ -130,6 +139,20 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
     setTimeout(() => setToast(null), 2500);
   }
 
+  /** Re-fetch one item's price snapshots (after a save/refresh that may add one). */
+  async function fetchHistory(itemId: string) {
+    try {
+      const res = await fetch(`/api/inventory/${itemId}/price-history`);
+      if (!res.ok) return;
+      const data = await res.json().catch(() => null);
+      if (Array.isArray(data?.points)) {
+        setHistory((prev) => ({ ...prev, [itemId]: data.points }));
+      }
+    } catch {
+      /* sparkline just stays as-is */
+    }
+  }
+
   async function confirmAdjust(e: React.FormEvent) {
     e.preventDefault();
     if (!adjusting) return;
@@ -208,6 +231,7 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         flash(data?.error ?? "Refresh failed");
       } else {
         flash(`Value updated: ${centsToUsd(data?.value_cents ?? null)}`);
+        void fetchHistory(item.id);
       }
       load();
     } catch {
@@ -234,6 +258,15 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
         flash(`Priced ${data.refreshed} new item${data.refreshed === 1 ? "" : "s"} · ${data.failed} failed`);
       } else {
         flash(data.refreshed > 0 ? `Priced ${data.refreshed} new item${data.refreshed === 1 ? "" : "s"}` : "Nothing to price yet");
+      }
+      if (Array.isArray(data?.historyPoints) && data.historyPoints.length > 0) {
+        setHistory((prev) => {
+          const next = { ...prev };
+          for (const p of data.historyPoints as PriceHistoryPoint[]) {
+            next[p.item_id] = [...(next[p.item_id] ?? []), p];
+          }
+          return next;
+        });
       }
       load();
     } catch {
@@ -509,6 +542,8 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
               onToggleActive={() => toggleActive(item)}
               onDelete={() => remove(item)}
               onRefreshPrice={() => refreshPrice(item)}
+              history={history[item.id] ?? []}
+              onShowHistory={() => setHistoryItem(item)}
             />
           ))}
         </div>
@@ -529,14 +564,20 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
           <ItemForm
             initial={editing === "new" ? null : editing}
             locations={locations}
-            onSaved={() => {
+            onSaved={(saved) => {
               setEditing(null);
               load();
+              void fetchHistory(saved.id);
             }}
             onClose={() => setEditing(null)}
           />
         )}
       </Modal>
+
+      <PriceHistoryModal
+        item={historyItem ? (items.find((i) => i.id === historyItem.id) ?? historyItem) : null}
+        onClose={() => setHistoryItem(null)}
+      />
 
       <Modal open={adjusting !== null} onClose={() => setAdjusting(null)} title="Adjust stock">
         {adjusting && (
@@ -575,21 +616,25 @@ export function InventoryClient({ initial }: { initial: Item[] }) {
 function ItemCard({
   item,
   locations,
+  history,
   onAssignLocation,
   onEdit,
   onAdjust,
   onToggleActive,
   onDelete,
   onRefreshPrice,
+  onShowHistory,
 }: {
   item: Item;
   locations: Location[];
+  history: PriceHistoryPoint[];
   onAssignLocation: (locationId: string) => void;
   onEdit: () => void;
   onAdjust: () => void;
   onToggleActive: () => void;
   onDelete: () => void;
   onRefreshPrice: () => void;
+  onShowHistory: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const { main, sub } = useMemo(() => {
@@ -665,6 +710,10 @@ function ItemCard({
           <IconPath d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10" />
           <IconPath d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
         </IconBtn>
+        <IconBtn title="Price history" onClick={onShowHistory}>
+          <IconPath d="M3 3v18h18" />
+          <IconPath d="m19 9-5 5-4-4-3 3" />
+        </IconBtn>
         <IconBtn title="Delete" onClick={onDelete}>
           <IconPath d="M3 6h18" />
           <IconPath d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -685,6 +734,7 @@ function ItemCard({
 
         <div className="mt-auto pt-1">
           <div className="text-lg font-bold text-emerald-600">{centsToUsd(item.value_cents)}</div>
+          <Sparkline points={history} />
           {item.unit_cost_cents != null && (
             <div className="text-xs text-slate-400">cost {centsToUsd(item.unit_cost_cents)}</div>
           )}

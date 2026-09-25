@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam, getDateOnly, todayDateOnly } from "@/lib/api-helper";
 import { ITEM_KINDS, normalizeName } from "@/lib/utils";
+import { recordPriceHistory } from "@/lib/price-history";
 
 // Union of ITEM_KINDS for `.includes()` checks.
 const VALID_KINDS = ITEM_KINDS as readonly string[];
@@ -139,6 +140,14 @@ export async function POST(request: Request) {
     delta: payload.quantity,
     reason: "add",
     note: "Initial stock",
+  });
+
+  // First price snapshot (baseline) for a value set at creation time.
+  await recordPriceHistory(supabase, {
+    ownerId: user.id,
+    itemId: data.id,
+    valueCents: payload.value_cents as number | null,
+    priceSource: "manual",
   });
 
   return NextResponse.json(data);

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getCents } from "@/lib/api-helper";
 import { ITEM_KINDS, parseCsv, normalizeName } from "@/lib/utils";
+import { recordPriceHistory } from "@/lib/price-history";
 
 const VALID_KINDS = ITEM_KINDS as readonly string[];
 
@@ -156,6 +157,13 @@ export async function POST(request: Request) {
           note: "CSV bulk import",
         });
       }
+      // First price snapshot for a value that arrived with the import.
+      await recordPriceHistory(supabase, {
+        ownerId: user.id,
+        itemId: createdItem.id,
+        valueCents: value,
+        priceSource: "manual",
+      });
       created++;
     }
   }

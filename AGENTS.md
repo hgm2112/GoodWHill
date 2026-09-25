@@ -70,11 +70,18 @@ Copy `.env.local.example` → `.env.local`. Keys:
     apply it before deploying code that sends `loose`. `0008_item_acquired_at.sql`
     adds `items.acquired_at` (date) + backfills from `created_at`; apply before
     deploying the date-acquired edit/scan code (inserts reference the column).
+    `0009_item_price_history.sql` adds the `item_price_history` time-series
+    table (price snapshots); apply it before relying on price history — until
+    then snapshot writes warn + skip and the history endpoint 500s (the modal
+    shows an error state, nothing else breaks).
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
     `value_cents`, `acquired_at` date (editable in the item form; scan-created
-    rows stamp the scan date), cached eBay price columns), `item_movements` (ledger, one
-    row per quantity change with a `reason`), `bundles`/`bundle_items`,
+    rows stamp the scan date), cached eBay price columns),     `item_movements` (ledger, one
+    row per quantity change with a `reason`), `item_price_history` (owner-scoped
+    time series of `value_cents` — one row per change + a first baseline,
+    written by `recordPriceHistory`, cascade-deleted with the item),
+    `bundles`/`bundle_items`,
     `allocations` (reserved stock), `listing_drafts`, `sales`, `listings`
     (synced eBay listings), `locations` (named storage boxes; `items` and
     `profiles` reference one via `location_id`/`default_location_id`, FK
@@ -108,6 +115,19 @@ Copy `.env.local.example` → `.env.local`. Keys:
     unpriced.
   - Quantity changes always create an `item_movements` row (reasons: add,
     remove, sale, reserve, release, adjust, import, return).
+  - Price changes always go through `recordPriceHistory`
+    (`src/lib/price-history.ts`) on every `value_cents` write: refresh-price
+    (single + bulk), `POST /api/inventory` (create), `PATCH /api/inventory/[id]`
+    (when `value_cents` is sent), CSV-import creates. It inserts an
+    `item_price_history` row **only when the value differs from the item's
+    latest snapshot** (or none exists yet — the baseline) and never throws
+    (a missing table/failed write just warns). Manual form edits record too;
+    null values never snapshot. Single refresh responses carry `historyPoint`,
+    bulk carries `historyPoints[]` so card sparklines update live. Read path:
+    `GET /api/inventory/[id]/price-history` (oldest→newest, limit 500);
+    the inventory page bulk-loads history (limit 5000) for card sparklines,
+    and `PriceHistoryModal.tsx` renders the full chart + last-10 table on the
+    card's "Price history" icon button.
   - Sealed item identity is `(owner_id, upc, location_id, name)` (partial
     unique index `items_upc_loc_name_unique` in `0005_item_name_identity.sql`):
     products sharing a barcode (e.g. Final Fantasy commander decks) stay

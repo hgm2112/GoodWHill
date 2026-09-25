@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getDateOnly } from "@/lib/api-helper";
 import { ITEM_KINDS, normalizeName } from "@/lib/utils";
+import { recordPriceHistory } from "@/lib/price-history";
 
 const VALID_KINDS = ITEM_KINDS as readonly string[];
 
@@ -96,6 +97,17 @@ export async function PATCH(request: Request, { params }: Params) {
     .select()
     .single();
   if (error) return apiError(error.message, 500, { code: "DB" });
+
+  // Value edits record a snapshot (skipped inside the helper when unchanged).
+  if ("value_cents" in next) {
+    const historyPoint = await recordPriceHistory(supabase, {
+      ownerId: user.id,
+      itemId: id,
+      valueCents: next.value_cents as number | null,
+      priceSource: existing.price_source,
+    });
+    if (historyPoint) return NextResponse.json({ ...data, historyPoint });
+  }
   return NextResponse.json(data);
 }
 

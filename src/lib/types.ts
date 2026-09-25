@@ -55,6 +55,14 @@ export interface ItemMovement {
   created_at: string;
 }
 
+export interface PriceHistoryPoint {
+  id: number;
+  item_id: string;
+  value_cents: number;
+  price_source: string;
+  created_at: string;
+}
+
 export interface CatalogEntry {
   upc: string;
   name: string;

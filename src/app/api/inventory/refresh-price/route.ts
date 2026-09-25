@@ -3,6 +3,8 @@ import { authUser, apiError } from "@/lib/api-helper";
 import { lookupSealedPrice, primaryCents, resolveNameImage, resolveProductByGtin, resolveVariantImage, nameHasVariant } from "@/lib/ebay/pricing";
 import { ebayConfigured } from "@/lib/ebay/oauth";
 import { getCardByName, cardUsdCents } from "@/lib/scryfall";
+import { recordPriceHistory } from "@/lib/price-history";
+import type { PriceHistoryPoint } from "@/lib/types";
 
 export const maxDuration = 120;
 
@@ -154,6 +156,7 @@ export async function POST(request: Request) {
     let refreshed = 0;
     let failed = 0;
     const errors: { name: string | null; error: string }[] = [];
+    const historyPoints: PriceHistoryPoint[] = [];
 
     for (const item of items ?? []) {
       try {
@@ -177,6 +180,15 @@ export async function POST(request: Request) {
           errors.push({ name: item.name, error: updateError.message });
         } else {
           refreshed++;
+          const point = await recordPriceHistory(supabase, {
+            ownerId: user.id,
+            itemId: item.id,
+            valueCents: (update.value_cents as number | undefined) ?? item.value_cents,
+            priceSource: (update.price_source as string | undefined) ?? item.price_source,
+          });
+          if (point) {
+            historyPoints.push(point);
+          }
         }
       } catch {
         failed++;
@@ -189,6 +201,7 @@ export async function POST(request: Request) {
       failed,
       skipped: (items?.length ?? 0) - refreshed - failed,
       errors,
+      historyPoints,
     });
   }
 
@@ -206,14 +219,22 @@ export async function POST(request: Request) {
   const result = await priceOne(item);
   if (!result.ok) return apiError(result.error, result.status, result.code ? { code: result.code } : undefined);
 
+  const finalUpdate = withoutManualValue(result.update, item);
   const { data: updated, error: updateError } = await supabase
     .from("items")
-    .update(withoutManualValue(result.update, item))
+    .update(finalUpdate)
     .eq("id", itemId)
     .eq("owner_id", user.id)
     .select()
     .single();
   if (updateError) return apiError(updateError.message, 500, { code: "DB" });
 
-  return NextResponse.json(updated);
+  const historyPoint = await recordPriceHistory(supabase, {
+    ownerId: user.id,
+    itemId,
+    valueCents: (finalUpdate.value_cents as number | undefined) ?? item.value_cents,
+    priceSource: (finalUpdate.price_source as string | undefined) ?? item.price_source,
+  });
+
+  return NextResponse.json(historyPoint ? { ...updated, historyPoint } : updated);
 }
