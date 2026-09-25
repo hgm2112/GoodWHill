@@ -62,6 +62,10 @@ export async function POST(request: Request) {
   if (body.acquired_at != null && !acquiredAt) {
     return apiError("acquired_at must be a YYYY-MM-DD date");
   }
+  const releaseDate = getDateOnly(body.release_date);
+  if (body.release_date != null && !releaseDate) {
+    return apiError("release_date must be a YYYY-MM-DD date");
+  }
 
   // Name-aware sealed duplicate check: products that share a UPC (e.g. Final
   // Fantasy commander decks) are separate rows keyed by name, so the same UPC
@@ -114,6 +118,8 @@ export async function POST(request: Request) {
     // Explicit value wins (even null when the form cleared it); API callers
     // that omit the field get today.
     acquired_at: "acquired_at" in body ? acquiredAt : todayDateOnly(),
+    // Never guessed — the product's release date is unknown until told.
+    release_date: "release_date" in body ? releaseDate : null,
     location_id: null,
   };
 

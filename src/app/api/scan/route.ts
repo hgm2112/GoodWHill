@@ -137,7 +137,12 @@ export async function POST(request: Request) {
     );
   }
 
-  const finalCatalog = { upc, name: catalogName, image_url: imageUrl } as Record<string, unknown>;
+  const finalCatalog = {
+    upc,
+    name: catalogName,
+    image_url: imageUrl,
+    release_date: existingCatalog?.release_date ?? null,
+  } as Record<string, unknown>;
 
   // 2. Find or create the user's item for this UPC + box + name.
   //    Products that share a barcode (e.g. Final Fantasy commander decks) live
@@ -171,7 +176,12 @@ export async function POST(request: Request) {
     return (rows ?? []).find((r) => normalizeName(r.name) === normalizeName(effectiveName)) ?? null;
   };
 
-  let item: { id: string; quantity: number; location_id: (string | null) | undefined } | null = null;
+  let item: {
+    id: string;
+    quantity: number;
+    location_id: (string | null) | undefined;
+    release_date?: string | null;
+  } | null = null;
   item = await findItem();
 
   if (!item) {
@@ -207,6 +217,8 @@ export async function POST(request: Request) {
         // New rows stamp the scan date (client sends its local date; server
         // falls back to today UTC when the field is missing/invalid).
         acquired_at: getDateOnly(body?.acquired_at) ?? todayDateOnly(),
+        // Product release date inherited from the shared catalog cache.
+        release_date: existingCatalog?.release_date ?? null,
       })
       .select()
       .single();
@@ -224,12 +236,16 @@ export async function POST(request: Request) {
     }
   }
 
-  // 3. Add stock.
+  // 3. Add stock (and backfill a blank release date from the catalog cache).
   if (!item) return apiError("Item could not be created", 500);
   const newQuantity = (item.quantity ?? 0) + delta;
+  const stockUpdate: Record<string, unknown> = { quantity: newQuantity };
+  if (!item.release_date && existingCatalog?.release_date) {
+    stockUpdate.release_date = existingCatalog.release_date;
+  }
   const { data: updated, error } = await supabase
     .from("items")
-    .update({ quantity: newQuantity })
+    .update(stockUpdate)
     .eq("id", item.id)
     .eq("owner_id", user.id)
     .select()

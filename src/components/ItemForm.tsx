@@ -28,6 +28,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [locationId, setLocationId] = useState<string>(initial?.location_id ?? "");
   const [acquiredAt, setAcquiredAt] = useState(initial?.acquired_at ?? (isEdit ? "" : localToday()));
+  const [releaseDate, setReleaseDate] = useState(initial?.release_date ?? "");
   const [pickingCard, setPickingCard] = useState(!isEdit && defaultKind === "loose");
 
   const [busy, setBusy] = useState(false);
@@ -39,6 +40,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
     setSetCode(card.set);
     setValue(card.value_cents);
     setImageUrl(card.image_url ?? "");
+    if (card.released_at) setReleaseDate(card.released_at);
     setPriceInfo(
       `Card price from Scryfall: ${card.value_cents ? `$${(card.value_cents / 100).toFixed(2)}` : "no listed price (set manually)"}`,
     );
@@ -156,6 +158,7 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
       notes: notes.trim() || null,
       location_id: locationId || null,
       acquired_at: /^\d{4}-\d{2}-\d{2}$/.test(acquiredAt) ? acquiredAt : null,
+      release_date: /^\d{4}-\d{2}-\d{2}$/.test(releaseDate) ? releaseDate : null,
     };
     try {
       const res = isEdit
@@ -316,6 +319,20 @@ export function ItemForm({ initial, defaultKind = "sealed", locations = [], onSa
           {isEdit
             ? "When you picked this item up — edit freely."
             : "Defaults to today; scanned items stamp the scan date."}
+        </p>
+      </div>
+
+      <div>
+        <label className="label">Release date</label>
+        <input
+          className="input"
+          type="date"
+          value={releaseDate}
+          onChange={(e) => setReleaseDate(e.target.value)}
+        />
+        <p className="mt-1 text-xs text-slate-400">
+          When the product came out — not when you got it. Blank if unknown;
+          refresh fills it in when eBay/Scryfall knows.
         </p>
       </div>
 

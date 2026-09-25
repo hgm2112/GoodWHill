@@ -22,6 +22,7 @@ export async function GET(request: Request) {
             ? Math.round(Number.parseFloat(c.prices.usd_foil) * 100)
             : null,
         image_url: c.image_uris?.small ?? null,
+        released_at: c.released_at,
       })),
     );
   } catch {

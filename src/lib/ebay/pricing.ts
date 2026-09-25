@@ -247,7 +247,11 @@ async function browseSearch(params: {
           | Record<string, unknown>
           | undefined
       )?.imageUrl as string | undefined;
-      out.push({ title, cents, image: primary ?? thumb ?? null });
+      out.push({
+        title,
+        cents,
+        image: primary ?? thumb ?? null,
+      });
     }
   }
   return out;

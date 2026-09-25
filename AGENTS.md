@@ -74,10 +74,14 @@ Copy `.env.local.example` → `.env.local`. Keys:
     table (price snapshots); apply it before relying on price history — until
     then snapshot writes warn + skip and the history endpoint 500s (the modal
     shows an error state, nothing else breaks).
+    `0010_item_release_date.sql` adds `items.release_date` +
+    `upc_catalog.release_date` (dates); apply it before deploying the
+    release-date edit/scan code (inserts reference the column).
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
     `value_cents`, `acquired_at` date (editable in the item form; scan-created
-    rows stamp the scan date), cached eBay price columns),     `item_movements` (ledger, one
+    rows stamp the scan date), `release_date` date (the product's release —
+    distinct from `acquired_at`), cached eBay price columns),     `item_movements` (ledger, one
     row per quantity change with a `reason`), `item_price_history` (owner-scoped
     time series of `value_cents` — one row per change + a first baseline,
     written by `recordPriceHistory`, cascade-deleted with the item),
@@ -136,6 +140,37 @@ Copy `.env.local.example` → `.env.local`. Keys:
     the inventory page bulk-loads history (limit 5000) for card sparklines,
     and `PriceHistoryModal.tsx` renders the full chart + last-10 table on the
     card's "Price history" icon button.
+  - Product release date (`items.release_date` + shared cache
+    `upc_catalog.release_date`, `0010_item_release_date.sql`): the PRODUCT's
+    release, distinct from `acquired_at`. Editable in the item form; shown as
+    `Released {formatDate(...)}` on the inventory card (omitted when blank)
+    and on the scan page's catalog card + matched rows. **Autofill fills
+    BLANKS ONLY** (a manual entry always wins). Resolver:
+    `resolveReleaseDate`/`resolveReleaseDateDetailed` in
+    `src/lib/release-dates.ts` (used by the refresh-price route AND the
+    probe) tries, in order — loose → the card's Scryfall `released_at`;
+    `set_code` → `getSetReleaseDate`; sealed/open → **Secret Lairs via
+    mtg.wiki** (`src/lib/secret-lair.ts` `lookupSecretLairDate`:
+    membership-verified — the drop's name must appear verbatim on a
+    `Superdrop|Drop Series|Commander Deck` page, `Secret Lair/…` hub
+    subpages excluded, and ALL owning pages must agree on ONE date, else
+    blank; never guesses) or else **product name → Scryfall set**
+    (`findSetForProduct` in `scryfall.ts`: text before `:` minus retail
+    words, exact-normalized → set-name-contains → token-subset tiers,
+    token/promo/memorabilia/alchemy sets filtered, unique main-set candidate
+    or blank; `Secret Lair*` names hard-excluded). eBay is NOT a date source
+    (Browse search never returns item aspects; TCG listing details only
+    carry a year-only "Year Manufactured"). Discovered dates cache on
+    `upc_catalog.release_date` (`cacheCatalogReleaseDate`, blank-fill only)
+    so one discovery serves every row + future scans with that barcode —
+    the scan route inherits it on create and backfills blanks. Bulk:
+    `POST /api/inventory/refresh-price` `{ scope: "no_release_date" }`
+    (≤50, per-product dedupe, prices untouched) — Inventory header button
+    "Fill release dates (N)". Verify with
+    `npx tsx scripts/probe-release-dates.ts --inventory` (runs the
+    production resolver over every item, prints each pick + source for
+    review; current data: 59/70 resolvable, 11 manual — Pokémon/Topps/
+    Yu-Gi-Oh/Festival + genuinely ambiguous Secret Lairs).
   - Sealed item identity is `(owner_id, upc, location_id, name)` (partial
     unique index `items_upc_loc_name_unique` in `0005_item_name_identity.sql`):
     products sharing a barcode (e.g. Final Fantasy commander decks) stay
@@ -215,7 +250,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
 ## Scryfall
 
 - `src/lib/scryfall.ts`: `searchCards` (query → cards), `autocomplete`,
-  `lookupByIds`, `getCardByName` (fuzzy `cards/named`), `cardUsdCents`.
+  `lookupByIds`, `getCardByName` (fuzzy `cards/named`), `getSetReleaseDate`
+  (set code → `released_at`), `findSetForProduct` (product name → set match
+  for release dates; conservative, never guesses), `cardUsdCents`.
 - Prices: sealed MTG product has no Scryfall price; bulk single cards do. A
   bulk card's `value_cents` comes from `prices.usd ?? usd_foil ?? usd_etched`.
 - Single cards have no standard barcodes — do NOT attempt OCR. Only sealed

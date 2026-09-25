@@ -11,6 +11,7 @@ export interface CardResult {
   rarity: string;
   value_cents: number | null;
   image_url: string | null;
+  released_at: string | null;
 }
 
 /** Debounced MTG card search with a result dropdown. */

@@ -6,22 +6,69 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Inventory visibility** (code complete, typecheck/lint green, **committed
-`26e3c0c`, pushed**): user rules — "paused items don't need to be
-hidden; just make it obvious that they are hidden" and "when something goes
-out of stock, just remove it". `GET /api/inventory` now returns ALL rows (the
-`includeInactive` param and every `.eq("active", true)` in its path are gone);
-the inventory grid always shows paused rows (red ring + artwork overlay
-"PAUSED · hidden from store") and hides `quantity = 0` rows behind a "Show out
-of stock (N)" toolbar toggle. Sale dropdown and bundle generation still
-exclude paused/sold-out rows themselves (user-confirmed: pause stays
-inventory-only). Two user questions answered via picker: recovery toggle
-chosen over literal permanent hiding; pause scope = inventory only.
+**Product release date** (code complete, typecheck/lint green, probe-verified
+**59/70 resolvable**, **NOT yet committed**): `items.release_date` — when the
+PRODUCT came out, distinct from `acquired_at`. Migration
+`supabase/migrations/0010_item_release_date.sql` (adds `items.release_date` +
+shared `upc_catalog.release_date`) **is already applied** — verified via REST
+(column returns, all null). Display: editable in the item form, `Released Jun
+13, 2025` on inventory cards / scan catalog card / matched rows (`formatDate`,
+omitted when blank). Autofill fills BLANKS ONLY.
+
+**Why nothing was filling (diagnosed + fixed this session):** the resolver
+had only two sources — loose-card Scryfall date (0 loose items exist) and
+`set_code` (0 of 70 items have one) — so every lookup returned null. Also
+confirmed live: eBay can NEVER be a source (Browse search returns no
+`localizedAspects` at all; TCG listing details only have year-only
+"Year Manufactured"). The fix (implemented):
+
+1. **`findSetForProduct`** (`scryfall.ts`) — product name → Scryfall set
+   match (6h `/sets` cache): before-`:` product line minus retail words;
+   exact-normalized → set-name-contains → token-subset tiers;
+   token/promo/memorabilia/alchemy sets filtered; unique main-set candidate
+   or blank; `Secret Lair*` hard-excluded (their `sld` date is 2019).
+   Prototype caught three wrong-match traps that are now guarded: CLB→1994
+   Legends, Commander Masters→Masters 25, SL drops→`sld 2019`.
+2. **`lookupSecretLairDate`** (`secret-lair.ts`) — mtg.wiki membership-
+   verified: drop name searched as phrase with `intitle:"Secret Lair"`,
+   title gated to `Superdrop|Drop Series|Commander Deck` (`Secret Lair/…`
+   hub subpages like the "Drop Series" index — which carries an unrelated
+   2025-10-29 date and poisoned early runs — excluded), phrase must appear
+   verbatim in the page wikitext, and **all owning pages must agree on
+   exactly one date** (else blank: e.g. "Command Tower" is reprinted across
+   7 superdrops → correctly left blank). 6h wikitext/phrase caches (negatives
+   cached too) keep a 50-item bulk fill ~10-20s.
+3. **`resolveReleaseDate`/`resolveReleaseDateDetailed`** live in
+   `src/lib/release-dates.ts` (shared by route + probe): loose card →
+   set_code → SL-wiki or set match.
+4. **Probe**: `npx tsx scripts/probe-release-dates.ts --inventory` runs the
+   production resolver over every item and prints each pick + source.
+   **Result: 59/70** (set_name=34, secret_lair=25); 11 manual = Pokémon×3,
+   Topps×3, Yu-Gi-Oh, Festival in a Box, plus 3 genuinely ambiguous Secret
+   Lairs (Lasagna Food Token, Command Tower, Inked Foil Edition). Every pick
+   eyeballed: set dates all correct; SL pages spot-checked verbatim in page
+   context (e.g. "Back in my day!" confirmed inside the Two Scoops superdrop
+   table).
 
 ## What We Did (this session)
 
-1. **Inventory visibility: paused always shown, sold-out hidden** (see
-   Current Objective — files under Files Changed).
+1. **Product release date feature** (Current Objective — uncommitted;
+   file list in its own section below): schema `0010`, item form field
+   (`ItemForm` "Released" input + `CardSearchInput`/scryfall search surfacing
+   `released_at` prefill), POST/PATCH inventory validate `YYYY-MM-DD`,
+   inventory card "Released …" line, scan-page catalog card + matched rows,
+   `cacheCatalogReleaseDate` + `{ scope: "no_release_date" }` bulk mode in
+   refresh-price (≤50, per-product dedupe, prices untouched, "Fill release
+   dates (N)" header button), scan route inherits catalog date on create +
+   backfills blanks. Initially the resolver had no working source (0 loose,
+   0 set_code → always null; user reported "no dates are being filled in") —
+   this session added the name→set matcher (`findSetForProduct`), the
+   membership-verified mtg.wiki Secret Lair lookup (`secret-lair.ts`),
+   extracted the resolver to `src/lib/release-dates.ts`, and added the
+   `--inventory` probe. eBay aspect path dropped after live probing (see
+   Current Objective).
+2. **Inventory visibility: paused always shown, sold-out hidden** (committed
+   `26e3c0c` + SESSION refresh `4b92db4`, pushed — see Files Changed below).
 
 ## What We Did (2026-09-24 sessions)
 
@@ -143,13 +190,22 @@ chosen over literal permanent hiding; pause scope = inventory only.
 
 ## Current State
 
-- `origin/main` = `26e3c0c` (inventory visibility, pushed). Working tree
-  **clean** — all 2026-09-24/25 work (price history, discount, duplicates,
-  dominant anchor, inventory visibility) is committed.
-- `typecheck` + `lint` pass (run after the inventory-visibility change).
+- `origin/main` = `4b92db4` (SESSION refresh for inventory visibility, pushed).
+  Working tree **dirty**: the release-date feature is fully coded but
+  **uncommitted** (awaiting user's commit request).
+- `typecheck` + `lint` pass (re-run after the matcher + SL lookup landed).
   **`npm run build` not run** — dev server is running in the user's
   foreground terminal; building would clobber `.next/` and 500 every dynamic
   route.
+- **Migration `0010` IS applied** (verified via REST this session: the
+  column returns, all rows null). **Dates are NOT filled yet** — the user
+  clicks "Fill release dates (N)" once the feature is browser-ready; expect
+  59/70 to fill in one or two clicks (cap 50 per call), 11 stay manual.
+- **Probe verified**: `npx tsx scripts/probe-release-dates.ts --inventory` →
+  **59/70 resolvable** (set_name=34, secret_lair=25), every pick + source
+  printed and reviewed; SL page matches spot-checked verbatim in wikitext
+  context. eBay probing proved Browse carries no usable release dates (see
+  Current Objective).
 - **Probe verified** dominant-anchor: `npx tsx scripts/probe-bundle-dupes.ts`
   → BOTH modes, dup rate 56–71%, dominant 100% anchor-first / 100%
   filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
@@ -158,16 +214,23 @@ chosen over literal permanent hiding; pause scope = inventory only.
 - Bundle discount + duplicates + dominant toggle NOT browser-checked yet. No
   browser check of price history either. Inventory visibility (paused shown,
   sold-out hidden) also not browser-checked yet.
-- Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
-  Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
-  diagnosis flip); its art is still the multi-deck set-pack image — not fixed
-  by backfill (kinds other/used excluded), user hasn't asked.
-- Two "Lorwyn Eclipsed" rows (Bundle, Player Boosters) have `price_checked_at`
-  set but `value_cents` null (eBay lookup came back empty). They now match the
-  widened bulk predicate, so "Browse active" will retry them.
+- Data (REST-verified this session): **70 items · 248 units** — 69 sealed +
+  1 open ("Tarkir Dragonstorm: Temur Roar Commander Deck", now kind `open`
+  with price $98.66 + picture ✓; the old "kind other, no art" note is dead).
+- All 6 "Lorwyn Eclipsed" rows are priced (Bundle $60, Play Boosters
+  $6.00/$6.24, etc.) — the old "value null, Browse will retry" note is dead.
 
 ## Decisions Made
 
+- **Release-date sources (2026-09-25)**: eBay is NOT one — live probing
+  proved Browse summaries return no `localizedAspects` (0/10, with/without
+  `fieldgroups=PRODUCT`) and TCG listing details only carry year-only
+  "Year Manufactured"; the dead aspect code was stripped from `pricing.ts`.
+  For Secret Lairs the user picked "Probe mtg.wiki first" over guessing;
+  the membership-verified lookup passed (21/28 + suffix fallbacks) and is
+  now the implementation. **Blank-not-guess**: anything unresolvable
+  (Pokémon/Topps/Yu-Gi-Oh, Secret Lairs whose owning pages disagree) stays
+  manual rather than risking a wrong date.
 - **Inventory visibility (2026-09-25, user-confirmed via picker)**: sold-out
   rows stay in the DB and are hidden behind a "Show out of stock (N)" toggle
   (chosen over literal permanent hiding — rows must stay editable/restockable);
@@ -190,7 +253,59 @@ chosen over literal permanent hiding; pause scope = inventory only.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, committed as `26e3c0c` = inventory visibility)
+## Files Changed (this session, UNCOMMITTED = product release date)
+
+- `supabase/migrations/0010_item_release_date.sql` (new) — nullable
+  `items.release_date date` + `upc_catalog.release_date date`, idempotent.
+- `src/lib/types.ts` — `Item.release_date`, `CatalogEntry.release_date`,
+  `ScryfallCard.released_at`.
+- `src/lib/scryfall.ts` — `cardFromJson` maps `released_at`;
+  `getSetReleaseDate(code)`; **`findSetForProduct(name)`** — 6h-cached
+  `/sets`, conservative product-line→set matcher (exact → set-contains →
+  token-subset; token/promo/memorabilia/alchemy filtered; unique main-set
+  candidate or blank; `Secret Lair*` excluded).
+- `src/lib/secret-lair.ts` (new) — `lookupSecretLairDate(itemName)`:
+  membership-verified mtg.wiki superdrop lookup (phrase search with
+  `intitle:"Secret Lair"`, title gate `Superdrop|Drop Series|Commander
+  Deck` + `Secret Lair/…` hub exclusion, verbatim wikitext membership,
+  all owners must agree on one date; 6h wikitext + phrase caches with
+  negatives).
+- `src/lib/release-dates.ts` (new) — `resolveReleaseDateDetailed`
+  (returns `{date, source, detail}` for the probe) + `resolveReleaseDate`
+  (date-only, used by the route): loose card → set_code → SL-wiki / set
+  match.
+- `src/lib/ebay/pricing.ts` — release-aspect code REMOVED after live probing
+  (search summaries have no `localizedAspects`; TCG details only have
+  "Year Manufactured"); pricing/art behavior untouched.
+- `src/app/api/inventory/refresh-price/route.ts` — imports the resolver from
+  `release-dates`, `cacheCatalogReleaseDate` (blank-fill on `upc_catalog`),
+  release date rides along in `priceOne` when blank, new `{ scope:
+  "no_release_date" }` bulk mode (≤50, per-product dedupe, prices
+  untouched), single/bulk responses cache the catalog date.
+- `src/app/api/inventory/route.ts` + `[id]/route.ts` — POST/PATCH accept and
+  `getDateOnly`-validate `release_date` (explicit null clears).
+- `src/app/api/scan/route.ts` — new rows inherit `existingCatalog.release_date`;
+  stock update backfills a blank item date from the catalog; catalog upserts
+  never touch `release_date`.
+- `src/app/api/scryfall/search/route.ts` + `src/components/CardSearchInput.tsx`
+  — search results carry `released_at` for form prefill.
+- `src/components/ItemForm.tsx` — "Released" date input (edit prefill, blank
+  allowed, `applyCard` prefill from the picked card).
+- `src/components/InventoryClient.tsx` — card "Released {formatDate}" line
+  (omitted when blank), `undatedCount` memo, "Fill release dates (N)" header
+  button → `scope: "no_release_date"`.
+- `src/components/ScanClient.tsx` — catalog card "Released …" line +
+  matched-inventory rows append `· Released …`.
+- `scripts/probe-bundle-dupes.ts` — `mk()` fixture gained `release_date: null`.
+- `scripts/probe-release-dates.ts` (new) — set-code / card-name modes +
+  **`--inventory`** (runs the production resolver over every item, prints
+  each pick + source).
+- `AGENTS.md` — migration `0010` note, tables line, release-date conventions
+  bullet (resolver sources + matcher rules + probe), Scryfall
+  `getSetReleaseDate`/`findSetForProduct`.
+  `SESSION.md` — this file.
+
+## Files Changed (2026-09-25, committed `26e3c0c` = inventory visibility)
 
 - `src/app/(app)/inventory/page.tsx` — SSR query: dropped `.eq("active", true)`.
 - `src/app/api/inventory/route.ts` — GET returns all owner rows; removed the
@@ -279,51 +394,63 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Problems / Blockers
 
-1. **Bundle discount + duplicates + dominant toggle not browser-exercised
+1. **Release date not filled/browser-verified yet** — migration `0010` is
+   applied (REST-verified) and the probe resolves **59/70**, but no dates
+   are written to the DB yet: have the user click "Fill release dates (N)"
+   (2 clicks: cap 50), then check the card "Released" lines, scan displays,
+   and the form field. 11 rows stay manual by design: Pokémon×3, Topps×3,
+   Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna Food
+   Token, Command Tower, Inked Foil Edition).
+2. **Bundle discount + duplicates + dominant toggle not browser-exercised
    yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
    create → detail/list show price · value; CSV has both rows; an old bundle
    shows price = value × 0.9. Duplicates: probe-verified (56–71% dup rate, 0
    violations); eyeball one real generate for `×N` lines on multi-copy
    under-$20 stock. Dominant: default-checked bundle leads with the priciest
    line; unchecking the box gives the old mix.
-2. **Inventory visibility not browser-verified** — paused rows always shown
+3. **Inventory visibility not browser-verified** — paused rows always shown
    (red ring + "PAUSED · hidden from store" overlay, no more Show-paused
    toggle); sold-out rows hidden unless "Show out of stock (N)" is checked
    (revealed rows keep the red `×0`); sale dropdown no longer lists 0-stock
    items.
-3. **Price history not browser-verified** (migration is in; check
+4. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
-4. **Dashboard releases not visually checked in a browser** — code + probe
+5. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-5. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+6. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-6. **`npm run build` not run this session** (blocked by the running dev server).
-7. **Temur Roar art** (kind `other`) still shows the multi-deck set-pack image
-   — browse_active already re-priced it; not backfilled (kinds other/used out
-   of scope). Optional cleanup, ask the user.
-8. Marketplace Insights access still pending eBay approval.
-9. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+7. **`npm run build` not run this session** (blocked by the running dev server).
+8. **Temur Roar art** — the deck is now kind `open` with price + picture, but
+   nobody has eyeballed whether the art is the right DECK art (it may still
+   be the old multi-deck set-pack image). Optional: check on the card, or run
+   `npm run backfill-art` (covers `open` now) if wrong.
+9. Marketplace Insights access still pending eBay approval.
+10. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Browser-verify the inventory visibility rules (Problem 2), the bundle
+1. Have the user click "Fill release dates (N)" and browser-verify the
+   release-date feature (Problem 1; probe says expect 59/70) — commit only
+   when the user asks.
+2. Browser-verify the inventory visibility rules (Problem 3), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
-   (Problems 1–3).
-2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+   (Problems 2–4).
+3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-3. Optional: resolve Temur Roar's art (or accept the pack image).
-4. Stop dev → `npm run build` → confirm green → restart dev.
-5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+4. Optional: eyeball Temur Roar's art (Problem 8) — re-run backfill-art if
+   it's still the set-pack image.
+5. Stop dev → `npm run build` → confirm green → restart dev.
+6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
 
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
-- Don't rewrite migrations `0001`–`0009`; add the next `0010_*.sql` (keep idempotent).
+- Don't rewrite migrations `0001`–`0010`; add the next `0011_*.sql` (keep idempotent).
 - Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
   `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
 - Split card names on **last `:`** for the bold sub-name display.

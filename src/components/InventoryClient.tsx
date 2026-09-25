@@ -8,6 +8,7 @@ import { PriceHistoryModal, Sparkline } from "@/components/PriceHistoryModal";
 import {
   centsToUsd,
   downloadTextFile,
+  formatDate,
   ITEM_KINDS,
   kindLabel,
   pluralize,
@@ -132,6 +133,14 @@ export function InventoryClient({
         (i) =>
           (i.value_cents == null || !i.image_url) &&
           (i.kind === "sealed" || i.kind === "open" || i.kind === "loose"),
+      ).length,
+    [items],
+  );
+
+  const undatedCount = useMemo(
+    () =>
+      items.filter(
+        (i) => i.release_date == null && (i.kind === "sealed" || i.kind === "open" || i.kind === "loose"),
       ).length,
     [items],
   );
@@ -278,6 +287,36 @@ export function InventoryClient({
     }
   }
 
+  async function refreshReleaseDates() {
+    setBusy(true);
+    try {
+      const res = await fetch("/api/inventory/refresh-price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "no_release_date" }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        flash(data?.error ?? "Release date lookup failed");
+      } else if (data?.refreshed == null) {
+        flash("Release date lookup failed — unexpected response");
+      } else if (data.failed > 0) {
+        flash(`Dated ${data.refreshed} item${data.refreshed === 1 ? "" : "s"} · ${data.failed} failed`);
+      } else {
+        flash(
+          data.refreshed > 0
+            ? `Dated ${data.refreshed} item${data.refreshed === 1 ? "" : "s"}`
+            : "No release dates found yet",
+        );
+      }
+      load();
+    } catch {
+      flash("Release date lookup failed — check your connection");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function onImport(files: FileList | null) {
     const file = files?.[0];
     if (!file) return;
@@ -369,14 +408,24 @@ export function InventoryClient({
       {/* Page header */}
       <div className="mb-4 flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Inventory</h1>
-        <button
-          className="btn btn-secondary whitespace-nowrap"
-          onClick={refreshUnpriced}
-          disabled={busy || unpricedCount === 0}
-          title="Fetch eBay prices/pictures for items without a value or image yet"
-        >
-          Browse active{unpricedCount > 0 ? ` (${unpricedCount})` : ""}
-        </button>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            className="btn btn-secondary whitespace-nowrap"
+            onClick={refreshReleaseDates}
+            disabled={busy || undatedCount === 0}
+            title="Look up product release dates (eBay listings / Scryfall sets) for items missing one — never overwrites what you entered"
+          >
+            Fill release dates{undatedCount > 0 ? ` (${undatedCount})` : ""}
+          </button>
+          <button
+            className="btn btn-secondary whitespace-nowrap"
+            onClick={refreshUnpriced}
+            disabled={busy || unpricedCount === 0}
+            title="Fetch eBay prices/pictures for items without a value or image yet"
+          >
+            Browse active{unpricedCount > 0 ? ` (${unpricedCount})` : ""}
+          </button>
+        </div>
       </div>
 
       {/* Toolbar */}
@@ -741,6 +790,11 @@ function ItemCard({
         {sub && (
           <div className="truncate text-xs text-slate-400" title={sub}>
             {sub}
+          </div>
+        )}
+        {item.release_date && (
+          <div className="truncate text-xs text-slate-400" title={`Released ${formatDate(item.release_date)}`}>
+            Released {formatDate(item.release_date)}
           </div>
         )}
 

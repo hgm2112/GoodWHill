@@ -35,6 +35,7 @@ function mk(name: string, value: number, quantity: number): Item {
     notes: null,
     location_id: null,
     acquired_at: null,
+    release_date: null,
     active: true,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",

@@ -52,6 +52,13 @@ export async function PATCH(request: Request, { params }: Params) {
     }
     next.acquired_at = acquiredAt;
   }
+  if ("release_date" in body) {
+    const releaseDate = getDateOnly(body.release_date);
+    if (body.release_date != null && !releaseDate) {
+      return apiError("release_date must be a YYYY-MM-DD date");
+    }
+    next.release_date = releaseDate;
+  }
   if ("active" in body) next.active = body.active !== false;
   if ("location_id" in body) {
     const value = body.location_id ? String(body.location_id) : null;

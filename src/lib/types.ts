@@ -31,6 +31,7 @@ export interface Item {
   notes: string | null;
   location_id: string | null;
   acquired_at: string | null;
+  release_date: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -74,6 +75,7 @@ export interface CatalogEntry {
   price_source: PriceSource;
   price_sample_count: number | null;
   price_checked_at: string | null;
+  release_date: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;
@@ -203,6 +205,8 @@ export interface ScryfallCard {
   set_name: string;
   collector_number: string;
   rarity: string;
+  /** Printing's release date (YYYY-MM-DD) — Scryfall `released_at`. */
+  released_at: string | null;
   prices: ScryfallPrices;
   image_uris?: { small?: string; normal?: string; large?: string };
   oracle_id: string;

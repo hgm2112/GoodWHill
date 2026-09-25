@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BarcodeScanner } from "@/components/BarcodeScanner";
-import { centsToUsd, formatDateTime, localToday, pluralize } from "@/lib/utils";
+import { centsToUsd, formatDate, formatDateTime, localToday, pluralize } from "@/lib/utils";
 import type { Item, Location, ScanResult } from "@/lib/types";
 
 export function ScanClient() {
@@ -389,6 +389,11 @@ export function ScanClient() {
                     {result.catalog?.set_code && (
                       <p className="text-xs text-slate-500">Set {result.catalog.set_code}</p>
                     )}
+                    {result.catalog?.release_date && (
+                      <p className="text-xs text-slate-500">
+                        Released {formatDate(result.catalog.release_date)}
+                      </p>
+                    )}
                     {subDraft.trim() ? (
                       <p className="mt-1 text-xs text-slate-400">
                         Will save as{" "}
@@ -469,6 +474,7 @@ export function ScanClient() {
                               {item.name}
                               {item.set_code ? ` (${item.set_code})` : ""}
                               {item.location_id ? ` · ${locations.find((l) => l.id === item.location_id)?.name ?? "?"}` : ""}
+                              {item.release_date ? ` · Released ${formatDate(item.release_date)}` : ""}
                               {item.quantity === 0 && (
                                 <span className="ml-1 text-xs text-red-600">0 units</span>
                               )}
