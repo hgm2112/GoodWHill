@@ -61,14 +61,33 @@ export function gameOf(category: string | null | undefined): string {
   return c.split(/\s+/)[0] || "";
 }
 
+/** Max copies of one under-$20 product inside a single bundle. */
+const DUP_MAX_UNITS = 5;
+/** Duplicates only below this value (strictly under $20). */
+const DUP_ELIGIBLE_VALUE_CENTS = 2000;
+/** Soft target for how many pieces a bundle holds (tie-break only). */
+const PREFERRED_UNITS = 8;
+
+/** Allowed units of `item` per bundle: stock, the 5-cap, and the $20 rule. */
+function maxUnits(item: Item): number {
+  const stock = Math.max(item.quantity, 0);
+  if ((item.value_cents ?? 0) >= DUP_ELIGIBLE_VALUE_CENTS) return Math.min(stock, 1);
+  return Math.min(stock, DUP_MAX_UNITS);
+}
+
 /**
  * Builds a random bundle from in-stock items summing to `targetCents` within
  * an absolute window (`toleranceCents`, default ±$15).
  *
  * Approach: repeated randomized trials. Each trial greedily draws items
- * (weighted toward their value + some variety) until adding another item
+ * (weight = value × remaining allowed units) until adding another item
  * would overshoot the window. The trial that lands closest to the target
  * (within tolerance) is returned; otherwise the closest under-fill is.
+ *
+ * Duplicates: items under $20 may repeat — up to `DUP_MAX_UNITS` of the same
+ * product per bundle, bounded by stock; anything $20+ appears at most once.
+ * Draws are weighted by remaining allowed units, so deep stock of a cheap
+ * item naturally shows up as a ×N line while capped/exhausted items drop out.
  *
  * Slots carry the item itself and are indexed locally — never with a position
  * from the pre-filter array (that mix caused TypeErrors when expensive items
@@ -96,27 +115,38 @@ export function generateBundle(
   let best: BundleLine[] | null = null;
   let bestScore = Infinity;
 
-  const totalWeight = eligible.reduce((sum, s) => sum + Math.sqrt(s.value_cents!), 0);
-
   for (let trial = 0; trial < 150; trial++) {
-    const lines = new Map<number, number>(); // eligible index -> qty
+    const lines = new Map<number, number>(); // eligible index -> units picked
+    const remaining = eligible.map((item) => maxUnits(item));
     let running = 0;
     let safety = 0;
 
+    const weightOf = (i: number) =>
+      remaining[i] > 0 ? Math.sqrt(eligible[i].value_cents!) * Math.sqrt(remaining[i]) : 0;
+
     while (running < targetCents && safety < 500) {
       safety++;
-      // Draw a weighted-random item. Aim for variety: weight grows with value
-      // but lightly favors lower-value items to mix in.
-      let pick = rng() * totalWeight;
+      let weightSum = 0;
+      for (let i = 0; i < eligible.length; i++) weightSum += weightOf(i);
+      if (weightSum <= 0) break; // everything capped or out of stock
+
+      // Draw a weighted-random item: value weight (sublinear, favors cheaper
+      // pieces) scaled by remaining allowed units so duplicates can happen.
+      let pick = rng() * weightSum;
       let chosenIndex = -1;
       for (let i = 0; i < eligible.length; i++) {
-        pick -= Math.sqrt(eligible[i].value_cents!);
+        const w = weightOf(i);
+        if (w <= 0) continue;
+        pick -= w;
         if (pick <= 0) {
           chosenIndex = i;
           break;
         }
       }
-      if (chosenIndex < 0) chosenIndex = Math.floor(rng() * eligible.length);
+      if (chosenIndex < 0) {
+        chosenIndex = remaining.findIndex((r) => r > 0); // float drift
+        if (chosenIndex < 0) break;
+      }
 
       const chosen = eligible[chosenIndex];
       const unit = chosen.value_cents!;
@@ -125,37 +155,31 @@ export function generateBundle(
       // Adding this unit would overshoot the window: try something smaller first.
       if (running + unit > targetCents + toleranceCents * 2) {
         const smallerIndex = eligible.findIndex(
-          (s) => s.value_cents! <= targetCents + toleranceCents - running && s.value_cents! < unit,
+          (s, i) =>
+            remaining[i] > 0 &&
+            s.value_cents! <= targetCents + toleranceCents - running &&
+            s.value_cents! < unit,
         );
         if (smallerIndex < 0) break;
-        const sc = lines.get(smallerIndex) ?? 0;
-        if (sc + 1 <= eligible[smallerIndex].quantity) {
-          lines.set(smallerIndex, sc + 1);
-          running += eligible[smallerIndex].value_cents!;
-        }
+        lines.set(smallerIndex, (lines.get(smallerIndex) ?? 0) + 1);
+        remaining[smallerIndex]--;
+        running += eligible[smallerIndex].value_cents!;
         continue;
       }
 
-      if (current + 1 <= chosen.quantity) {
-        lines.set(chosenIndex, current + 1);
-        running += unit;
-      } else {
-        // Pick the closest remaining-cheap item available.
-        const altIndex = eligible.findIndex(
-          (s, i) =>
-            (lines.get(i) ?? 0) + 1 <= s.quantity &&
-            running + s.value_cents! <= targetCents + toleranceCents,
-        );
-        if (altIndex < 0) break;
-        lines.set(altIndex, (lines.get(altIndex) ?? 0) + 1);
-        running += eligible[altIndex].value_cents!;
-      }
+      // `chosenIndex` always has allowed room: zero-weight items can't be drawn.
+      lines.set(chosenIndex, current + 1);
+      remaining[chosenIndex]--;
+      running += unit;
     }
 
     // Only consider results within the absolute window (± toleranceCents).
     if (Math.abs(running - targetCents) > toleranceCents) continue;
 
-    const score = Math.abs(running - targetCents) * 10_000 + Math.abs(lines.size - 8);
+    // Fill accuracy dominates; the units term only breaks ties between
+    // equally-good fills (it no longer prefers distinct lines over duplicates).
+    const units = [...lines.values()].reduce((sum, q) => sum + q, 0);
+    const score = Math.abs(running - targetCents) * 10_000 + Math.abs(units - PREFERRED_UNITS);
     if (score < bestScore) {
       bestScore = score;
       best = [...lines.entries()].map(([index, qty]) => ({
@@ -175,7 +199,7 @@ export function generateBundle(
       if (fallbackRunning >= targetCents) break;
       const unit = item.value_cents!;
       const room = targetCents + toleranceCents - fallbackRunning;
-      const perItem = Math.min(item.quantity, Math.floor(room / unit));
+      const perItem = Math.min(maxUnits(item), Math.floor(room / unit));
       if (perItem <= 0) continue;
       fallback.push({ item, quantity: perItem, valueCents: unit });
       fallbackRunning += perItem * unit;

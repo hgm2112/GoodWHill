@@ -230,6 +230,14 @@ Copy `.env.local.example` → `.env.local`. Keys:
   RNG, ±$15 absolute window (`BUNDLE_TOLERANCE_CENTS`), falls back to
   closest-under. The random seed comes from `Math.random()` per call, so
   "Regenerate" truly re-picks.
+- **Duplicates** (`maxUnits` in `bundle.ts`, per user rules): items under $20
+  may repeat — max 5 of the same product per bundle, bounded by stock; items
+  $20+ appear at most once. Draw weight = `sqrt(value) × sqrt(remaining
+  allowed units)`, so deep cheap stock repeats naturally while capped/
+  exhausted items drop out of the draw. The trial tie-break counts total
+  units (soft ~8-piece preference), not distinct lines. Verify with
+  `npx tsx scripts/probe-bundle-dupes.ts` (prints dup rate + exits non-zero
+  on a rule violation).
 - **Internal 10% bundle discount** (`BUNDLE_DISCOUNT_PCT`): the wire
   `targetCents` is the bundle's SELLING PRICE; both bundle routes convert it
   via `contentsTargetForPrice` (`price ÷ 0.9` — a $100 bundle packs ~$111 of

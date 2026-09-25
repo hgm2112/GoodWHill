@@ -6,13 +6,13 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Bundle 10% discount** (code complete, typecheck/lint green, **UNCOMMITTED** —
-commit when the user asks): bundle price = 90% of contents value; presets are
-now the SELLING price and generation fills ~10% more value so a $100 bundle
-packs ~$111. Seller-only surfaces (builder preview, list, detail, CSV); never
-in listing drafts/titles. The price-history feature was committed this
-session as `94528d0` after the user applied migration `0009` in the SQL
-editor.
+**Bundle duplicates** (code complete, typecheck/lint green, **UNCOMMITTED** —
+commit when the user asks): generated bundles may repeat an item when it's in
+stock — **under $20 items only, max 5 of the same product per bundle; $20+
+items appear once**. Probe-verified (`npx tsx scripts/probe-bundle-dupes.ts`:
+56–71% of bundles contain a dup line, zero rule violations at $50/$100/$150
+fill targets). The 10% bundle discount was committed this session as
+`89ac676`; price history as `94528d0` (migration `0009` applied by the user).
 
 ## What We Did (this session)
 
@@ -54,6 +54,19 @@ editor.
    contents → existing bundles also show 10% off). Buyer-facing surfaces
    untouched: listing drafts stay price-free (`dd4d7e2` respected), bundle
    name = game label, sales record gross you type yourself. No migration.
+   (Committed this session as `89ac676`.)
+6. **Bundle duplicates** (UNCOMMITTED, code complete): user rules — only
+   items **under $20** may repeat, **max 5 of the same product per bundle**
+   (bounded by stock); $20+ items at most once. `generateBundle` rewritten:
+   per-item `maxUnits` cap enforced on every add-path (main draw,
+   overshoot-diversion, fallback); draw weight = `sqrt(value) ×
+   sqrt(remaining allowed units)` (capped/exhausted items drop out); trial
+   tie-break now counts total units (soft ~8) instead of distinct lines (the
+   old `|lines.size − 8|` actively suppressed duplicates). No API/DB/UI
+   changes (`×N` + line totals already render). Verified with the new
+   `scripts/probe-bundle-dupes.ts`: 56–71% of 200–500 bundles contain a dup
+   line at $50/$100/$150 fill targets, **0 rule violations**, avg fill on
+   target.
 
 ## What We Did (previous session)
 
@@ -105,15 +118,17 @@ editor.
 
 ## Current State
 
-- `origin/main` = `94528d0` (price history, pushed). Working tree **dirty**:
-  the bundle-discount work is written but **uncommitted** (files below).
+- `origin/main` = `89ac676` (bundle discount, pushed). Working tree **dirty**:
+  the bundle-duplicates work is written but **uncommitted** (files below).
 - **Migration `0009` applied** (SQL editor by the user, this session). The
   price-history feature has not been browser-verified yet.
-- `typecheck` + `lint` pass (run after the bundle-discount change). **`npm run
+- `typecheck` + `lint` pass (run after the bundle-duplicates change).
+  **Probe verified**: `npx tsx scripts/probe-bundle-dupes.ts` → dup rate
+  56–71%, 0 violations at fill targets $55.56/$111.11/$166.67. **`npm run
   build` not run** — dev server is running in the user's foreground terminal;
   building would clobber `.next/` and 500 every dynamic route.
-- Bundle discount NOT exercised against the DB/browser yet (generate →
-  create → detail/list/CSV). No browser check of price history either.
+- Bundle discount + duplicates NOT browser-checked yet. No browser check of
+  price history either.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -142,24 +157,22 @@ editor.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = bundle discount only)
+## Files Changed (this session, UNCOMMITTED = bundle duplicates only)
 
-- `src/lib/bundle.ts` — `BUNDLE_DISCOUNT_PCT = 10`, `bundlePriceCents(total)`
-  (round(total × 0.9)), `contentsTargetForPrice(price)` (round(price ÷ 0.9));
-  `bundleToCsv` now emits "Contents value" + "Bundle price (10% off)" rows.
-- `src/app/api/bundles/generate/route.ts` — converts wire price → contents
-  target for generation; response `targetCents` = fill target, adds
-  `priceCents`; errors reference the price point.
-- `src/app/api/bundles/route.ts` — same conversion; `target_value_cents`
-  stores the contents-fill target.
-- `src/components/BundleBuilder.tsx` — label "Bundle price" (+ note that the
-  discount is internal), preview shows bold "Bundle price $X" + "% off value",
-  badge line now "Contents … / fill target …"; `Preview.priceCents`.
-- `src/app/(app)/bundles/page.tsx` — list row: bold price, grey "· $value value".
-- `src/app/(app)/bundles/[id]/page.tsx` — header: "price · value · items".
-- `src/components/BundleDetailClient.tsx` — contents card: price · value · fill.
-- `AGENTS.md` — Bundle generation section rewritten (discount semantics).
+- `src/lib/bundle.ts` — `DUP_MAX_UNITS = 5`, `DUP_ELIGIBLE_VALUE_CENTS =
+  2000`, `PREFERRED_UNITS = 8`, `maxUnits(item)` (stock ∩ 5-cap ∩ $20 rule);
+  `generateBundle` rewritten: per-trial `remaining[]` budget enforced on all
+  add-paths + fallback, `sqrt(value) × sqrt(remaining)` draw weights,
+  units-based tie-break; the stock-blind draw + distinct-lines tie-break
+  (which suppressed duplicates) are gone.
+- `scripts/probe-bundle-dupes.ts` (new) — synthetic stock (cheap multi-copy /
+  $20+ with qty>1 / big pieces), prints dup rate, max qty, units/distinct/fill
+  averages; exits non-zero on any rule violation.
+- `AGENTS.md` — duplicate-rules bullet under Bundle generation.
   `SESSION.md` — this file.
+
+(Committed earlier this session: `94528d0` price history, `89ac676` bundle
+discount — see "What We Did" items 4–5.)
 
 ## Files Changed (previous session)
 
@@ -211,9 +224,11 @@ editor.
 
 ## Problems / Blockers
 
-1. **Bundle discount not exercised yet** — verify: generate a $100 preset →
-   contents ≈ $111, price $100; create → detail/list show price · value; CSV
-   has both rows; an old pre-discount bundle shows price = value × 0.9.
+1. **Bundle discount + duplicates not browser-exercised yet** — discount:
+   generate a $100 preset → contents ≈ $111, price $100; create → detail/list
+   show price · value; CSV has both rows; an old bundle shows price = value ×
+   0.9. Duplicates: probe-verified (56–71% dup rate, 0 violations); eyeball
+   one real generate for `×N` lines on multi-copy under-$20 stock.
 2. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
 3. **Dashboard releases not visually checked in a browser** — code + probe
@@ -231,9 +246,10 @@ editor.
 
 ## Next Steps (priority order)
 
-1. Browser-verify the bundle discount (list above) + price history sparkline.
-2. Commit/push the bundle-discount work when the user asks (files under Files
-   Changed).
+1. Browser-verify the bundle discount + duplicates and the price history
+   sparkline (items under Problems 1–2).
+2. Commit/push the bundle-duplicates work when the user asks (files under
+   Files Changed).
 3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
