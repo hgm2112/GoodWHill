@@ -6,8 +6,8 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Inventory visibility** (code complete, typecheck/lint green, **UNCOMMITTED**
-— commit when the user asks): user rules — "paused items don't need to be
+**Inventory visibility** (code complete, typecheck/lint green, **committed
+`26e3c0c`, pushed**): user rules — "paused items don't need to be
 hidden; just make it obvious that they are hidden" and "when something goes
 out of stock, just remove it". `GET /api/inventory` now returns ALL rows (the
 `includeInactive` param and every `.eq("active", true)` in its path are gone);
@@ -143,9 +143,9 @@ chosen over literal permanent hiding; pause scope = inventory only.
 
 ## Current State
 
-- `origin/main` = `fb605ee` (SESSION refresh after `7b6a1bf` dominant-anchor,
-  pushed). Working tree **dirty**: the inventory-visibility work is written
-  but **uncommitted** (files below).
+- `origin/main` = `26e3c0c` (inventory visibility, pushed). Working tree
+  **clean** — all 2026-09-24/25 work (price history, discount, duplicates,
+  dominant anchor, inventory visibility) is committed.
 - `typecheck` + `lint` pass (run after the inventory-visibility change).
   **`npm run build` not run** — dev server is running in the user's
   foreground terminal; building would clobber `.next/` and 500 every dynamic
@@ -190,7 +190,7 @@ chosen over literal permanent hiding; pause scope = inventory only.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = inventory visibility)
+## Files Changed (this session, committed as `26e3c0c` = inventory visibility)
 
 - `src/app/(app)/inventory/page.tsx` — SSR query: dropped `.eq("active", true)`.
 - `src/app/api/inventory/route.ts` — GET returns all owner rows; removed the
@@ -311,14 +311,12 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 1. Browser-verify the inventory visibility rules (Problem 2), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
    (Problems 1–3).
-2. Commit/push the inventory-visibility work when the user asks (files under
-   Files Changed).
-3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-4. Optional: resolve Temur Roar's art (or accept the pack image).
-5. Stop dev → `npm run build` → confirm green → restart dev.
-6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+3. Optional: resolve Temur Roar's art (or accept the pack image).
+4. Stop dev → `npm run build` → confirm green → restart dev.
+5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
