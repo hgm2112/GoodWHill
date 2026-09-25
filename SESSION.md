@@ -6,13 +6,13 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Item price history** (code complete, typecheck/lint green, **UNCOMMITTED** —
-commit when the user asks): per-item `value_cents` time series recorded on
-every value write (refresh, manual edit, create, CSV import), shown as a
-sparkline under the card value + a full chart modal. **Migration
-`0009_item_price_history.sql` is NOT applied yet** — the user must run it in
-the SQL editor before the feature shows data (writes degrade to warnings until
-then). The dashboard releases work was committed this session as `ba77fba`.
+**Bundle 10% discount** (code complete, typecheck/lint green, **UNCOMMITTED** —
+commit when the user asks): bundle price = 90% of contents value; presets are
+now the SELLING price and generation fills ~10% more value so a $100 bundle
+packs ~$111. Seller-only surfaces (builder preview, list, detail, CSV); never
+in listing drafts/titles. The price-history feature was committed this
+session as `94528d0` after the user applied migration `0009` in the SQL
+editor.
 
 ## What We Did (this session)
 
@@ -40,13 +40,20 @@ then). The dashboard releases work was committed this session as `ba77fba`.
    `npx tsx scripts/probe-releases.ts`: **13 rows, 0 errors** (Reality
    Fracture Oct 2 → Kamigawa Jun 2027, Delta Reign Nov 6, both Secret Lairs
    TBA).
-4. **Item price history** (UNCOMMITTED, code complete): see "Files Changed
-   (this session, UNCOMMITTED)" below for the full list. Decisions the user
-   made for it: record on refresh **and** manual edits; record **only on
-   change** (first snapshot = baseline; identical value → no row); UI = card
-   sparkline + detail modal. `recordPriceHistory` (`src/lib/price-history.ts`)
-   never throws — missing table (pre-migration) just warns, so the rest of the
-   app keeps working. Migration numbered `0009` (0009-for-sales never existed).
+4. **Item price history committed** (`94528d0`, pushed): see the historical
+   file list in git; migration `0009` **applied by the user in the SQL
+   editor** this session. Decisions: record on refresh **and** manual edits;
+   **only on change** (first snapshot = baseline); UI = card sparkline +
+   detail modal; `recordPriceHistory` never throws (missing table → warn).
+5. **Bundle 10% discount** (UNCOMMITTED, code complete): user's requirement —
+   "prices are still too high… bundle $110 value into a $100 bundle", and
+   "no one else should know about it than me and you". Semantics: wire
+   `targetCents` = SELLING price; both bundle routes fill contents to
+   `contentsTargetForPrice(price)` = price ÷ 0.9; displayed price always
+   `bundlePriceCents(total)` = round(total × 0.9) (derived from actual
+   contents → existing bundles also show 10% off). Buyer-facing surfaces
+   untouched: listing drafts stay price-free (`dd4d7e2` respected), bundle
+   name = game label, sales record gross you type yourself. No migration.
 
 ## What We Did (previous session)
 
@@ -98,18 +105,15 @@ then). The dashboard releases work was committed this session as `ba77fba`.
 
 ## Current State
 
-- `origin/main` = `ba77fba` (dashboard releases, pushed). Working tree **dirty**:
-  the price-history feature is written but **uncommitted** (files below).
-- **Migration `0009` NOT applied** — user still has to run
-  `supabase/migrations/0009_item_price_history.sql` in the SQL editor (no
-  psql/supabase CLI on this machine). Until then `recordPriceHistory` warns +
-  skips, `GET /api/inventory/[id]/price-history` 500s (modal shows its error
-  state); nothing else breaks. `0008` applied & verified earlier.
-- `typecheck` + `lint` pass (run after the price-history change). **`npm run
+- `origin/main` = `94528d0` (price history, pushed). Working tree **dirty**:
+  the bundle-discount work is written but **uncommitted** (files below).
+- **Migration `0009` applied** (SQL editor by the user, this session). The
+  price-history feature has not been browser-verified yet.
+- `typecheck` + `lint` pass (run after the bundle-discount change). **`npm run
   build` not run** — dev server is running in the user's foreground terminal;
   building would clobber `.next/` and 500 every dynamic route.
-- Price history NOT exercised against the DB yet (blocked on migration 0009);
-  no browser check done either.
+- Bundle discount NOT exercised against the DB/browser yet (generate →
+  create → detail/list/CSV). No browser check of price history either.
 - Data: ~35 items (UI header showed "35 items · 49 units"). "Tarkir
   Dragonstorm: Temur Roar" is kind `other` again (restored after an earlier
   diagnosis flip); its art is still the multi-deck set-pack image — not fixed
@@ -138,41 +142,23 @@ then). The dashboard releases work was committed this session as `ba77fba`.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = price history only)
+## Files Changed (this session, UNCOMMITTED = bundle discount only)
 
-- `supabase/migrations/0009_item_price_history.sql` (new) — `item_price_history`
-  (id, owner_id, item_id FK cascade, value_cents, price_source default
-  `manual`, created_at) + `(item_id, created_at desc)` index + owner RLS +
-  grants. Idempotent. **Not applied yet.**
-- `src/lib/price-history.ts` (new) — `recordPriceHistory(supabase, {ownerId,
-  itemId, valueCents, priceSource})`: skips null values and no-change
-  snapshots (latest = `created_at desc, id desc`), baseline when no snapshot
-  exists, try/catch → warns + returns null, never throws.
-- `src/lib/types.ts` — `PriceHistoryPoint` interface.
-- `src/app/api/inventory/refresh-price/route.ts` — records on single (returns
-  `historyPoint`) + bulk (`historyPoints[]`), using the *effective* value
-  (`update.value_cents ?? item.value_cents` — covers `withoutManualValue`
-  strips so manual items get a baseline).
-- `src/app/api/inventory/route.ts` — baseline on create-with-value.
-- `src/app/api/inventory/[id]/route.ts` — records when `"value_cents" in
-  next`, returns `historyPoint`.
-- `src/app/api/inventory/import/route.ts` — baseline per created row with a
-  value.
-- `src/app/api/inventory/[id]/price-history/route.ts` (new) — GET, asc, limit
-  500, `{ points: [...] }`.
-- `src/app/(app)/inventory/page.tsx` — Promise.all items + history queries
-  (limit 5000, grouped by item_id) → `initialHistory` prop.
-- `src/components/PriceHistoryModal.tsx` (new) — `Sparkline` (≥2 points,
-  emerald/red tint), `HistoryChart` (hand-rolled SVG line + dots + date
-  axis), `PriceHistoryModal` (Current/Min/Max/Change stats, chart, last-10
-  table with per-row Δ + source labels).
-- `src/components/InventoryClient.tsx` — `history`/`historyItem` state,
-  `fetchHistory()`, refresh/save hooks (single refresh + ItemForm `onSaved`
-  refetch; bulk appends `historyPoints`), ItemCard props, "Price history"
-  `IconBtn` (after Refresh price), `<Sparkline>` under the card value,
-  `<PriceHistoryModal>` (derives the fresh item from `items` while open).
-- `AGENTS.md` — migration note, `item_price_history` table bullet, "Price
-  changes always go through `recordPriceHistory`" money-path bullet.
+- `src/lib/bundle.ts` — `BUNDLE_DISCOUNT_PCT = 10`, `bundlePriceCents(total)`
+  (round(total × 0.9)), `contentsTargetForPrice(price)` (round(price ÷ 0.9));
+  `bundleToCsv` now emits "Contents value" + "Bundle price (10% off)" rows.
+- `src/app/api/bundles/generate/route.ts` — converts wire price → contents
+  target for generation; response `targetCents` = fill target, adds
+  `priceCents`; errors reference the price point.
+- `src/app/api/bundles/route.ts` — same conversion; `target_value_cents`
+  stores the contents-fill target.
+- `src/components/BundleBuilder.tsx` — label "Bundle price" (+ note that the
+  discount is internal), preview shows bold "Bundle price $X" + "% off value",
+  badge line now "Contents … / fill target …"; `Preview.priceCents`.
+- `src/app/(app)/bundles/page.tsx` — list row: bold price, grey "· $value value".
+- `src/app/(app)/bundles/[id]/page.tsx` — header: "price · value · items".
+- `src/components/BundleDetailClient.tsx` — contents card: price · value · fill.
+- `AGENTS.md` — Bundle generation section rewritten (discount semantics).
   `SESSION.md` — this file.
 
 ## Files Changed (previous session)
@@ -225,12 +211,11 @@ then). The dashboard releases work was committed this session as `ba77fba`.
 
 ## Problems / Blockers
 
-1. **Migration `0009` not applied** — no psql/supabase CLI here, so the user
-   must run it in the SQL editor. Until then: no snapshots recorded, the
-   history endpoint 500s (modal error state only).
-2. **Price history not yet exercised** (DB write + sparkline/modal render) —
-   blocked on 1; verify after: create-with-value baseline, refresh change →
-   row, refresh same price → no row, manual edit → row.
+1. **Bundle discount not exercised yet** — verify: generate a $100 preset →
+   contents ≈ $111, price $100; create → detail/list show price · value; CSV
+   has both rows; an old pre-discount bundle shows price = value × 0.9.
+2. **Price history not browser-verified** (migration is in; check
+   sparkline/modal after a refresh or manual value edit).
 3. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
 4. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
@@ -246,10 +231,8 @@ then). The dashboard releases work was committed this session as `ba77fba`.
 
 ## Next Steps (priority order)
 
-1. User runs `0009_item_price_history.sql` in the Supabase SQL editor; then
-   verify the flow (baseline on create, refresh change, no-op on same price,
-   manual edit, sparkline + modal in the browser).
-2. Commit/push the price-history work when the user asks (files under Files
+1. Browser-verify the bundle discount (list above) + price history sparkline.
+2. Commit/push the bundle-discount work when the user asks (files under Files
    Changed).
 3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement

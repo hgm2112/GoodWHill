@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { NumberDollars } from "@/components/ui/Modal";
 import { ArtworkThumb } from "@/components/ArtworkThumb";
 import { centsToUsd, ITEM_KINDS, kindLabel, truncated } from "@/lib/utils";
-import { BUNDLE_TOLERANCE_CENTS, gameOf } from "@/lib/bundle";
+import { BUNDLE_DISCOUNT_PCT, BUNDLE_TOLERANCE_CENTS, gameOf } from "@/lib/bundle";
 import type { Item, ItemKind, Location } from "@/lib/types";
 
 interface PreviewLine {
@@ -17,6 +17,7 @@ interface PreviewLine {
 
 interface Preview {
   targetCents: number;
+  priceCents: number;
   totalCents: number;
   lines: PreviewLine[];
   suggestedName: string;
@@ -156,7 +157,7 @@ export function BundleBuilder() {
   return (
     <div className="space-y-4">
       <div className="card">
-        <label className="label">Target value</label>
+        <label className="label">Bundle price</label>
         <div className="flex flex-wrap items-center gap-2">
           {PRESETS.map((p) => (
             <button
@@ -176,6 +177,10 @@ export function BundleBuilder() {
             <NumberDollars valueCents={targetCents} onChange={(v) => setTargetCents(v ?? 0)} />
           </div>
         </div>
+        <p className="mt-1 text-xs text-slate-400">
+          What the bundle sells for. Contents are filled to ~{BUNDLE_DISCOUNT_PCT}% above this
+          price — that discount stays between you and the app.
+        </p>
 
         <label className="label mt-4">Bundle from</label>
         <select className="input" value={game} onChange={(e) => setGame(e.target.value)}>
@@ -222,10 +227,17 @@ export function BundleBuilder() {
             <p className="text-sm font-semibold">
               Preview{preview.game ? ` · ${preview.game}` : ""}
             </p>
-            <p className="flex items-center gap-2 text-sm">
+            <p className="mt-1 flex flex-wrap items-baseline gap-2">
+              <span className="text-lg font-bold text-emerald-700">
+                Bundle price {centsToUsd(preview.priceCents)}
+              </span>
+              <span className="text-xs text-slate-400">
+                {BUNDLE_DISCOUNT_PCT}% off {centsToUsd(preview.totalCents)} value
+              </span>
+            </p>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-sm">
               <span className={badgeColor(preview.totalCents, preview.targetCents)}>
-                Total{" "}
-                {centsToUsd(preview.totalCents)} / target {centsToUsd(preview.targetCents)}
+                Contents {centsToUsd(preview.totalCents)} / fill target {centsToUsd(preview.targetCents)}
               </span>
               <span className="text-xs text-slate-400">
                 {preview.totalCents === preview.targetCents

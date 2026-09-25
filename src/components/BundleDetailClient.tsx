@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { bundleToCsv } from "@/lib/bundle";
+import { bundlePriceCents, bundleToCsv } from "@/lib/bundle";
 import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, pluralize, truncated } from "@/lib/utils";
 import type { BundleStatus, BundleWithItems, Location } from "@/lib/types";
 
@@ -235,8 +235,10 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
         <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
           <p className="text-sm font-bold">Contents ({count} items)</p>
           <p className="text-sm">
-            <span className="font-bold text-emerald-700">{centsToUsd(bundle.total_value_cents)}</span>{" "}
-            <span className="text-xs text-slate-400">vs {centsToUsd(bundle.target_value_cents)} target</span>
+            <span className="font-bold text-emerald-700">{centsToUsd(bundlePriceCents(bundle.total_value_cents))}</span>{" "}
+            <span className="text-xs text-slate-400">
+              price · {centsToUsd(bundle.total_value_cents)} value · fill {centsToUsd(bundle.target_value_cents)}
+            </span>
           </p>
         </div>
         <ul className="divide-y divide-slate-100">

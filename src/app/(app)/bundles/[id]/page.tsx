@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BundleDetailClient } from "@/components/BundleDetailClient";
+import { bundlePriceCents } from "@/lib/bundle";
 import { centsToUsd, truncated } from "@/lib/utils";
 
 export const metadata = { title: "Bundle · goodwhilly" };
@@ -40,7 +41,7 @@ export default async function BundleDetailPage({ params }: { params: Promise<{ i
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold">{truncated(data.name, 60)}</h1>
         <span className="text-sm text-slate-400">
-          {centsToUsd(data.total_value_cents)} value · {count} items
+          <span className="font-semibold text-emerald-700">{centsToUsd(bundlePriceCents(data.total_value_cents))}</span> price · {centsToUsd(data.total_value_cents)} value · {count} items
         </span>
       </div>
       <p className="text-xs text-slate-400">

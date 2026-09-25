@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BundleBuilder } from "@/components/BundleBuilder";
+import { bundlePriceCents } from "@/lib/bundle";
 import { centsToUsd, truncated } from "@/lib/utils";
 
 export const metadata = { title: "Bundles · goodwhilly" };
@@ -77,8 +78,8 @@ export default async function BundlesPage() {
                     </span>
                   </span>
                   <span className="text-sm">
-                    <span className="font-bold text-emerald-700">{centsToUsd(b.total_value_cents)}</span>
-                    <span className="ml-1 text-xs text-slate-400">/ {centsToUsd(b.target_value_cents)}</span>
+                    <span className="font-bold text-emerald-700">{centsToUsd(bundlePriceCents(b.total_value_cents))}</span>
+                    <span className="ml-1 text-xs text-slate-400">· {centsToUsd(b.total_value_cents)} value</span>
                   </span>
                 </Link>
               </li>

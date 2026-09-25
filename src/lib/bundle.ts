@@ -32,6 +32,26 @@ function mulberry32(seed: number) {
 export const BUNDLE_TOLERANCE_CENTS = 1500;
 
 /**
+ * Bundle discount: the asking price is 10% below the contents' value (the
+ * component prices run a bit high, so every bundle is priced 10% off).
+ * Seller-facing only — never surfaces in listing drafts/titles.
+ */
+export const BUNDLE_DISCOUNT_PCT = 10;
+
+/** Asking price for a bundle: 10% off its contents' value. */
+export function bundlePriceCents(totalValueCents: number): number {
+  return Math.round(totalValueCents * (1 - BUNDLE_DISCOUNT_PCT / 100));
+}
+
+/**
+ * Contents-fill target for a chosen price point: value whose 10% discount
+ * lands on `priceCents` (a $100 bundle packs ~$111 of stock).
+ */
+export function contentsTargetForPrice(priceCents: number): number {
+  return Math.round(priceCents / (1 - BUNDLE_DISCOUNT_PCT / 100));
+}
+
+/**
  * First word of a category ("MTG Sealed" → "MTG"); "" when blank.
  * Used to group inventory into games (MTG, Pokemon, …) for bundling.
  */
@@ -284,7 +304,8 @@ export function bundleToCsv(lines: BundleLine[], totalCents: number): string {
       ((l.valueCents * l.quantity) / 100).toFixed(2),
     ]),
     [],
-    ["Bundle total (USD)", "", "", "", (totalCents / 100).toFixed(2)],
+    ["Contents value (USD)", "", "", "", (totalCents / 100).toFixed(2)],
+    [`Bundle price (${BUNDLE_DISCOUNT_PCT}% off, USD)`, "", "", "", (bundlePriceCents(totalCents) / 100).toFixed(2)],
   ];
   return rows
     .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))

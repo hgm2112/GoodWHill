@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { authUser, apiError, getIntParam } from "@/lib/api-helper";
-import { buildBundleAcrossGames, type GameBundleResult } from "@/lib/bundle";
+import { buildBundleAcrossGames, contentsTargetForPrice, type GameBundleResult } from "@/lib/bundle";
 import { BUNDLE_KINDS, ITEM_KINDS } from "@/lib/utils";
 import type { Item } from "@/lib/types";
 
@@ -10,6 +10,8 @@ const VALID_KINDS = ITEM_KINDS as readonly string[];
  * GET  /api/bundles — list bundles (with item counts).
  * POST /api/bundles — generate, persist, and ALLOCATE stock for a bundle.
  *   Body: { name, targetCents, kinds, game? }
+ *   `targetCents` is the selling price; `target_value_cents` stores the
+ *   contents-fill target (price ÷ 0.9, the 10% bundle discount).
  */
 export async function GET() {
   const auth = await authUser();
@@ -38,8 +40,9 @@ export async function POST(request: Request) {
   const { supabase, user } = auth;
 
   const body = (await request.json().catch(() => null)) as Record<string, unknown> | null;
-  const targetCents = getIntParam(String(body?.targetCents ?? ""));
-  if (!targetCents || targetCents < 500) return apiError("targetCents must be >= $5");
+  const priceCents = getIntParam(String(body?.targetCents ?? ""));
+  if (!priceCents || priceCents < 500) return apiError("targetCents must be >= $5");
+  const contentsTarget = contentsTargetForPrice(priceCents);
 
   const nameRaw = String(body?.name ?? "").trim();
   const kindsRaw = Array.isArray(body?.kinds)
@@ -62,14 +65,14 @@ export async function POST(request: Request) {
 
   let result: GameBundleResult | null = null;
   try {
-    result = buildBundleAcrossGames(items as Item[], targetCents, undefined, game);
+    result = buildBundleAcrossGames(items as Item[], contentsTarget, undefined, game);
   } catch {
     return apiError("Bundle generation failed", 500, { code: "GEN" });
   }
   if (!result) {
     return apiError(
       game
-        ? `Couldn't build a bundle from ${game} stock near $${(targetCents / 100).toFixed(0)}`
+        ? `Couldn't build a bundle from ${game} stock near $${(priceCents / 100).toFixed(0)}`
         : "Could not build a bundle near the target",
       409,
     );
@@ -82,7 +85,7 @@ export async function POST(request: Request) {
     .insert({
       owner_id: user.id,
       name,
-      target_value_cents: targetCents,
+      target_value_cents: contentsTarget,
       total_value_cents: result.totalCents,
       status: "allocated",
     })

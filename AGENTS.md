@@ -227,12 +227,24 @@ Copy `.env.local.example` → `.env.local`. Keys:
 ## Bundle generation
 
 - `src/lib/bundle.ts` `generateBundle(items, targetCents, tolerance)` — seeded
-  RNG, tolerates ±5%, falls back to closest-under. The random seed comes from
-  `Math.random()` per call, so "Regenerate" truly re-picks.
+  RNG, ±$15 absolute window (`BUNDLE_TOLERANCE_CENTS`), falls back to
+  closest-under. The random seed comes from `Math.random()` per call, so
+  "Regenerate" truly re-picks.
+- **Internal 10% bundle discount** (`BUNDLE_DISCOUNT_PCT`): the wire
+  `targetCents` is the bundle's SELLING PRICE; both bundle routes convert it
+  via `contentsTargetForPrice` (`price ÷ 0.9` — a $100 bundle packs ~$111 of
+  value) before generating, and `target_value_cents` stores that contents-fill
+  target. The price shown anywhere is always `bundlePriceCents(total)` =
+  `round(total × 0.9)`, derived from the actual contents — so pre-existing
+  bundles also display 10% off ("prices run a bit high"). Seller-facing only:
+  builder preview, bundles list, detail header + contents card, CSV export —
+  never in listing drafts/titles (`generateListingText` stays price-free by
+  design) or anything else buyer-visible.
 - `POST /api/bundles/generate` returns a non-persisting preview (client shows
-  it; calling again re-randomizes). `POST /api/bundles` persists + reserves.
+  it; calling again re-randomizes; response carries `priceCents` alongside the
+  fill `targetCents`). `POST /api/bundles` persists + reserves.
 - `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
-  and `bundleToCsv`.
+  and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
 
 ## Working set / next steps
 
