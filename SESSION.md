@@ -7,7 +7,7 @@ this file records where the previous session left off.
 ## Current Objective
 
 **Dominant-anchor bundle composition** (code complete, typecheck/lint/probe
-green, **UNCOMMITTED** — commit when the user asks): `generateBundle` gained a
+green, **committed `7b6a1bf`, pushed**): `generateBundle` gained a
 toggleable composition mode (default ON): each bundle anchors on one of the
 top-5 priciest eligible items (sqrt(value)-weighted) and fills ONLY with
 items worth ≤50% of that anchor; lines return anchor-first, fillers
@@ -49,7 +49,7 @@ price history as `94528d0` (migration `0009` applied by the user).
    editor** this session. Decisions: record on refresh **and** manual edits;
    **only on change** (first snapshot = baseline); UI = card sparkline +
    detail modal; `recordPriceHistory` never throws (missing table → warn).
-5. **Bundle 10% discount** (UNCOMMITTED, code complete): user's requirement —
+5. **Bundle 10% discount** (`89ac676`, pushed): user's requirement —
    "prices are still too high… bundle $110 value into a $100 bundle", and
    "no one else should know about it than me and you". Semantics: wire
    `targetCents` = SELLING price; both bundle routes fill contents to
@@ -73,7 +73,7 @@ price history as `94528d0` (migration `0009` applied by the user).
    target. (Commit message: quote the message with single quotes — it contains
    `$20`, which bash ate once → mangled `9f36ca8`, fixed via amend +
    `--force-with-lease`.)
-7. **Dominant-anchor composition** (UNCOMMITTED, code complete): user request
+7. **Dominant-anchor composition** (`7b6a1bf`, pushed): user request
    — bundle should start from one standout item + smaller fillers, with a
    toggle. `BundleGenOptions { dominant?: boolean }` (default true);
    `generateBundle` now routes to `dominantBundle` (top-5 sqrt(value)-weighted
@@ -138,8 +138,9 @@ price history as `94528d0` (migration `0009` applied by the user).
 
 ## Current State
 
-- `origin/main` = `24de6a9` (bundle duplicates, pushed). Working tree **dirty**:
-  the dominant-anchor work is written but **uncommitted** (files below).
+- `origin/main` = `7b6a1bf` (dominant-anchor mode, pushed). Working tree
+  **clean** — all this session's work (price history, discount, duplicates,
+  dominant anchor) is committed.
 - **Migration `0009` applied** (SQL editor by the user, this session). The
   price-history feature has not been browser-verified yet.
 - `typecheck` + `lint` pass (run after the dominant-anchor change).
@@ -178,7 +179,7 @@ price history as `94528d0` (migration `0009` applied by the user).
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = dominant-anchor only)
+## Files Changed (this session, committed as `7b6a1bf` = dominant-anchor)
 
 - `src/lib/bundle.ts` — `BundleGenOptions { dominant? }` (default true);
   `generateBundle` routes to new `dominantBundle` (top-5 weighted anchor,
@@ -275,14 +276,12 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 1. Browser-verify the bundle discount + duplicates + dominant toggle and the
    price history sparkline (items under Problems 1–2).
-2. Commit/push the dominant-anchor work when the user asks (files under
-   Files Changed).
-3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+2. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-4. Optional: resolve Temur Roar's art (or accept the pack image).
-5. Stop dev → `npm run build` → confirm green → restart dev.
-6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+3. Optional: resolve Temur Roar's art (or accept the pack image).
+4. Stop dev → `npm run build` → confirm green → restart dev.
+5. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
