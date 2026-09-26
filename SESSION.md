@@ -6,21 +6,29 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Bundle preview == created bundle** (code complete, typecheck/lint green,
-**NOT yet committed**, needs browser check): user bug — "when i generate a
-bundle, it changes once i create it… it makes a new bundle again". Root
-cause: `BundleBuilder.create()` sent only `name/targetCents/kinds/dominant/
-game` (no lines) and `POST /api/bundles` re-ran `buildBundleAcrossGames`,
-whose RNG seeds from `Math.random()` per call → a fresh random bundle every
-create. Fix: the builder now sends the previewed `lines`
-(`{ itemId, quantity }[]`) + `targetCents: preview.priceCents` +
-`targetValueCents: preview.targetCents`; the create route persists those
-lines as-is (re-read money from the DB, re-check active/stock/dup rules,
-`409 STALE_PREVIEW` "Inventory changed since this preview — regenerate the
-bundle." when they fail, `targetCents ≥ $5` check skipped in this mode since
-it's a generation-only guard). Omitting `lines` keeps the legacy
-generate+persist path. Verify: generate → create → Bundles detail shows the
-identical lines/value/price; Regenerate still re-randomizes.
+**Actual Listing Price + Shipping Fee on bundles** (code complete,
+typecheck/lint green, **NOT yet committed**, **migration `0011` NOT yet
+applied**): user request — "let me adjust the actual listing price when i
+mark it as listed and have a shipping field in there too". Two nullable
+int columns on `bundles` (`0011_bundle_listing_fields.sql`: add
+`listing_price_cents` + `shipping_cents`, idempotent — **user must apply in
+the SQL editor before browser-testing**, the PATCH writes them). UI: "Mark
+listed" on the bundle detail page now opens a panel with `NumberDollars`
+inputs labeled exactly **"Actual Listing Price"** (prefilled with the
+suggested `bundlePriceCents(total)`) and **"Shipping Fee"** (blank);
+confirm PATCHes status + values (`listingPriceCents`/`shippingCents`, null
+clears, integer ≥ 0 else 400). Once set, an info line shows both with an
+**Edit** button (re-saves without status change). Display: detail info line
+replaces derived price logic only in the list (bundles list bold = actual
+price when set, `listed · ship $Y · $X value` label); sale form prefills
+Gross/Shipping when that bundle is picked (non-null values only, still
+editable). CSV/drafts untouched.
+
+**Bundle preview == created bundle** (committed `4f376b5`, pushed with docs
+`e533545`): create no longer re-rolls — builder sends the previewed `lines`
++ `targetValueCents`; route persists them (money from the DB, `409
+STALE_PREVIEW` guard). NOT yet browser-confirmed by the user (they committed
+it themselves).
 
 **Product release date** (committed `524e903`, pushed; probe-verified
 **59/70 resolvable**, **dates NOT yet filled in the DB**): `items.release_date` — when the
@@ -68,11 +76,18 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## What We Did (this session)
 
-1. **Bundle preview == created bundle** (Current Objective — uncommitted;
-   file list in its own section below): create used to re-roll a random
-   bundle; now the previewed lines are sent and persisted exactly (money from
-   the DB, `409 STALE_PREVIEW` guard).
-2. **Product release date feature** (committed `524e903`, pushed;
+1. **Actual Listing Price + Shipping Fee** (Current Objective — uncommitted;
+   file list in its own section below): migration `0011` (NOT yet applied),
+   PATCH accepts `listingPriceCents`/`shippingCents`, mark-listed panel +
+   Edit affordance, bundles-list display, sale-form prefill.
+2. **Bundle preview == created bundle** (committed `4f376b5` + docs
+   `e533545`, pushed): user bug — create re-rolled a fresh random bundle
+   because `BundleBuilder.create()` sent no lines and `POST /api/bundles`
+   re-ran `buildBundleAcrossGames` (seeds from `Math.random()` per call).
+   Fix: builder sends previewed `lines` + `targetValueCents`; route persists
+   them exactly (money re-read from the DB, dup/stock/active re-checked,
+   `409 STALE_PREVIEW` when inventory moved; no `lines` → legacy generate).
+3. **Product release date feature** (committed `524e903`, pushed;
    file list in its own section below): schema `0010`, item form field
    (`ItemForm` "Released" input + `CardSearchInput`/scryfall search surfacing
    `released_at` prefill), POST/PATCH inventory validate `YYYY-MM-DD`,
@@ -87,7 +102,7 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
    extracted the resolver to `src/lib/release-dates.ts`, and added the
    `--inventory` probe. eBay aspect path dropped after live probing (see
    Current Objective).
-3. **Inventory visibility: paused always shown, sold-out hidden** (committed
+4. **Inventory visibility: paused always shown, sold-out hidden** (committed
    `26e3c0c` + SESSION refresh `4b92db4`, pushed — see Files Changed below).
 
 ## What We Did (2026-09-24 sessions)
@@ -210,15 +225,17 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## Current State
 
-- `origin/main` = `524e903` (release date, pushed; `4b92db4` was the prior
-  SESSION refresh). Working tree **dirty**: the bundle preview==create fix is
+- `origin/main` = `e533545` (preview fix `4f376b5` + docs, pushed).
+  Working tree **dirty**: the Actual Listing Price / Shipping Fee feature is
   fully coded but **uncommitted** (awaiting user's commit request).
-- `typecheck` + `lint` pass (re-run after the bundle fix landed). Route probe:
-  unauthenticated `POST /api/bundles` → `401 {"error":"Unauthorized"}` (no
-  bare 500).
+- `typecheck` + `lint` pass (re-run after the listing-price feature landed).
   **`npm run build` not run** — dev server is running in the user's
   foreground terminal; building would clobber `.next/` and 500 every dynamic
   route.
+- **Migration `0011` NOT applied yet** (`0011_bundle_listing_fields.sql` —
+  `bundles.listing_price_cents` + `shipping_cents`); the user applies it in
+  the SQL editor BEFORE browser-testing (the mark-listed PATCH writes these
+  columns → PGRST204 error until then).
 - **Migration `0010` IS applied** (verified via REST this session: the
   column returns, all rows null). **Dates are NOT filled yet** — the user
   clicks "Fill release dates (N)" once the feature is browser-ready; expect
@@ -233,8 +250,10 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
 - **Migration `0009` applied** (SQL editor by the user, 2026-09-24). The
   price-history feature has not been browser-verified yet.
-- **Bundle preview==create NOT browser-checked yet** (generate → create →
-  Bundles detail must show the identical lines/value/price). Bundle discount
+- **Actual Listing Price / Shipping Fee NOT browser-checked yet** (and
+  migration `0011` unapplied — see above). **Bundle preview==create NOT
+  browser-confirmed yet** (generate → create → Bundles detail must show the
+  identical lines/value/price). Bundle discount
   + duplicates + dominant toggle NOT browser-checked yet. No
   browser check of price history either. Inventory visibility (paused shown,
   sold-out hidden) also not browser-checked yet.
@@ -277,7 +296,28 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = bundle preview fix)
+## Files Changed (this session, UNCOMMITTED = Actual Listing Price / Shipping Fee)
+
+- `supabase/migrations/0011_bundle_listing_fields.sql` (new) — nullable
+  `bundles.listing_price_cents` + `bundles.shipping_cents`, idempotent.
+  **NOT applied yet** (user runs it in the SQL editor first).
+- `src/lib/types.ts` — `Bundle.listing_price_cents` / `shipping_cents`.
+- `src/app/api/bundles/[id]/route.ts` — PATCH accepts `listingPriceCents`/
+  `shippingCents` (null clears; integer ≥ 0 cents else 400), applied to the
+  update map; JSDoc updated.
+- `src/components/BundleDetailClient.tsx` — "Mark listed" opens the panel
+  (`listingPanel` "list"/"edit", `NumberDollars` × 2 labeled "Actual
+  Listing Price"/"Shipping Fee", price prefilled `bundlePriceCents(total)`),
+  `saveListing(markListed)` PATCHes status + values (edit mode re-sends the
+  current status); info line + **Edit** button when either value is set.
+- `src/app/(app)/bundles/page.tsx` — maps the new columns; bold price =
+  actual when set, `listed · ship $Y · $X value` label (`listingLabel`).
+- `src/components/SalesClient.tsx` — bundle `<select>` prefill: picks with
+  non-null `listing_price_cents`/`shipping_cents` set Gross/Shipping.
+- `AGENTS.md` — migration `0011` note, `bundles` table line, listing-price
+  bullet. `SESSION.md` — this file.
+
+## Files Changed (committed `4f376b5` = bundle preview fix; docs `e533545`)
 
 - `src/app/api/bundles/route.ts` — new `resultFromLines()` helper (validates
   `{ itemId, quantity }[]`, merges dup ids, re-fetches owner-scoped rows,
@@ -434,70 +474,79 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Problems / Blockers
 
-1. **Bundle preview==create not browser-verified yet** — the fix is coded
-   (typecheck/lint green; unauth `POST /api/bundles` → 401 JSON). Generate a
+1. **Actual Listing Price / Shipping Fee not applied/browser-verified yet**
+   — migration `0011` is NOT applied (user runs it in the SQL editor first;
+   until then the mark-listed PATCH 500s on the missing column). Then:
+   bundle detail → "Mark listed" → panel with **Actual Listing Price**
+   prefilled at the suggested price + blank **Shipping Fee** → confirm →
+   info line shows both, bundles list bold = actual price with `listed ·
+   ship $Y · $X value`, **Edit** re-saves without status change, sale form
+   prefills Gross/Shipping when the bundle is picked. Uncommitted.
+2. **Bundle preview==create not browser-confirmed yet** — committed
+   `4f376b5` (pushed with docs `e533545`); typecheck/lint green. Generate a
    bundle → Create → open it on the Bundles tab: the lines/value/price must
    be identical to the preview; "Regenerate" must still re-randomize; a stale
    preview (item paused/sold out since) should show the inline "Inventory
-   changed since this preview — regenerate the bundle." error. Uncommitted.
-2. **Release date not filled/browser-verified yet** — migration `0010` is
+   changed since this preview — regenerate the bundle." error.
+3. **Release date not filled/browser-verified yet** — migration `0010` is
    applied (REST-verified) and the probe resolves **59/70**, but no dates
    are written to the DB yet: have the user click "Fill release dates (N)"
    (2 clicks: cap 50), then check the card "Released" lines, scan displays,
    and the form field. 11 rows stay manual by design: Pokémon×3, Topps×3,
    Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna Food
    Token, Command Tower, Inked Foil Edition).
-3. **Bundle discount + duplicates + dominant toggle not browser-exercised
+4. **Bundle discount + duplicates + dominant toggle not browser-exercised
    yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
    create → detail/list show price · value; CSV has both rows; an old bundle
    shows price = value × 0.9. Duplicates: probe-verified (56–71% dup rate, 0
    violations); eyeball one real generate for `×N` lines on multi-copy
    under-$20 stock. Dominant: default-checked bundle leads with the priciest
    line; unchecking the box gives the old mix.
-4. **Inventory visibility not browser-verified** — paused rows always shown
+5. **Inventory visibility not browser-verified** — paused rows always shown
    (red ring + "PAUSED · hidden from store" overlay, no more Show-paused
    toggle); sold-out rows hidden unless "Show out of stock (N)" is checked
    (revealed rows keep the red `×0`); sale dropdown no longer lists 0-stock
    items.
-5. **Price history not browser-verified** (migration is in; check
+6. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
-6. **Dashboard releases not visually checked in a browser** — code + probe
+7. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-7. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+8. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-8. **`npm run build` not run this session** (blocked by the running dev server).
-9. **Temur Roar art** — the deck is now kind `open` with price + picture, but
+9. **`npm run build` not run this session** (blocked by the running dev server).
+10. **Temur Roar art** — the deck is now kind `open` with price + picture, but
    nobody has eyeballed whether the art is the right DECK art (it may still
    be the old multi-deck set-pack image). Optional: check on the card, or run
    `npm run backfill-art` (covers `open` now) if wrong.
-10. Marketplace Insights access still pending eBay approval.
-11. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+11. Marketplace Insights access still pending eBay approval.
+12. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Browser-verify the bundle preview fix (Problem 1) — commit only when the
-   user asks.
-2. Have the user click "Fill release dates (N)" and browser-verify the
-   release-date feature (Problem 2; probe says expect 59/70).
-3. Browser-verify the inventory visibility rules (Problem 4), the bundle
+1. Apply migration `0011` (user, SQL editor), browser-verify the Actual
+   Listing Price flow (Problem 1) — commit only when the user asks.
+2. Browser-verify the bundle preview fix (Problem 2).
+3. Have the user click "Fill release dates (N)" and browser-verify the
+   release-date feature (Problem 3; probe says expect 59/70).
+4. Browser-verify the inventory visibility rules (Problem 5), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
-   (Problems 3 + 5).
-4. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+   (Problems 4 + 6).
+5. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-5. Optional: eyeball Temur Roar's art (Problem 9) — re-run backfill-art if
+6. Optional: eyeball Temur Roar's art (Problem 10) — re-run backfill-art if
    it's still the set-pack image.
-6. Stop dev → `npm run build` → confirm green → restart dev.
-7. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+7. Stop dev → `npm run build` → confirm green → restart dev.
+8. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
 
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
-- Don't rewrite migrations `0001`–`0010`; add the next `0011_*.sql` (keep idempotent).
+- Don't rewrite migrations `0001`–`0011`; add the next `0012_*.sql` (keep idempotent).
 - Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
   `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
 - Split card names on **last `:`** for the bold sub-name display.

@@ -77,6 +77,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     `0010_item_release_date.sql` adds `items.release_date` +
     `upc_catalog.release_date` (dates); apply it before deploying the
     release-date edit/scan code (inserts reference the column).
+    `0011_bundle_listing_fields.sql` adds `bundles.listing_price_cents` +
+    `bundles.shipping_cents` (nullable); apply it before the mark-listed
+    panel (PATCH writes these columns).
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
     `value_cents`, `acquired_at` date (editable in the item form; scan-created
@@ -85,7 +88,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     row per quantity change with a `reason`), `item_price_history` (owner-scoped
     time series of `value_cents` — one row per change + a first baseline,
     written by `recordPriceHistory`, cascade-deleted with the item),
-    `bundles`/`bundle_items`,
+    `bundles` (incl. `listing_price_cents` "Actual Listing Price" +
+    `shipping_cents` "Shipping Fee", captured by the mark-listed panel and
+    editable after; prefills Gross/Shipping in the sale form)/`bundle_items`,
     `allocations` (reserved stock), `listing_drafts`, `sales`, `listings`
     (synced eBay listings), `locations` (named storage boxes; `items` and
     `profiles` reference one via `location_id`/`default_location_id`, FK
@@ -314,6 +319,17 @@ Copy `.env.local.example` → `.env.local`. Keys:
   STALE_PREVIEW` if inventory moved), so preview == created. Without `lines`
   it falls back to generating a fresh bundle (legacy callers; `targetCents` ≥
   $5 required there). Both routes accept `dominant` (boolean, default true).
+- **Actual Listing Price / Shipping Fee** (`bundles.listing_price_cents` +
+  `shipping_cents`, `0011_bundle_listing_fields.sql`): captured on the
+  bundle detail page when marking listed — "Mark listed" opens a panel with
+  the two `NumberDollars` inputs (price prefilled with the suggested
+  `bundlePriceCents(total)`, shipping blank) and PATCHes
+  `listingPriceCents`/`shippingCents` (null clears, must be integer ≥ 0
+  cents) alongside `status`; once set, an info line shows both with an
+  **Edit** button that re-saves without changing status. Display: detail
+  info line + bundles list (the actual price replaces the derived price,
+  `ship $Y` appended when set). The sale form prefills Gross/Shipping from
+  these when that bundle is picked (still editable). CSV/drafts untouched.
 - `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
   and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
 

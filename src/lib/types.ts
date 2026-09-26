@@ -89,6 +89,8 @@ export interface Bundle {
   total_value_cents: number;
   status: BundleStatus;
   ebay_listing_id: string | null;
+  listing_price_cents: number | null;
+  shipping_cents: number | null;
   created_at: string;
   updated_at: string;
 }

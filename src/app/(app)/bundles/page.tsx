@@ -27,6 +27,8 @@ export default async function BundlesPage() {
       target_value_cents: number;
       total_value_cents: number;
       status: string;
+      listing_price_cents: number | null;
+      shipping_cents: number | null;
       created_at: string;
       bundle_items?: Array<{ quantity: number }>;
     }) => ({
@@ -35,6 +37,12 @@ export default async function BundlesPage() {
       target_value_cents: b.target_value_cents,
       total_value_cents: b.total_value_cents,
       status: b.status,
+      listing_price_cents: b.listing_price_cents,
+      shipping_cents: b.shipping_cents,
+      listingLabel: [
+        ...(b.listing_price_cents != null ? ["listed"] : []),
+        ...(b.shipping_cents != null ? [`ship ${centsToUsd(b.shipping_cents)}`] : []),
+      ].join(" · "),
       created_at: b.created_at,
       item_count: (b.bundle_items ?? []).reduce(
         (n: number, x: { quantity: number }) => n + x.quantity,
@@ -78,8 +86,15 @@ export default async function BundlesPage() {
                     </span>
                   </span>
                   <span className="text-sm">
-                    <span className="font-bold text-emerald-700">{centsToUsd(bundlePriceCents(b.total_value_cents))}</span>
-                    <span className="ml-1 text-xs text-slate-400">· {centsToUsd(b.total_value_cents)} value</span>
+                    <span className="font-bold text-emerald-700">
+                      {centsToUsd(
+                        b.listing_price_cents ?? bundlePriceCents(b.total_value_cents),
+                      )}
+                    </span>
+                    <span className="ml-1 text-xs text-slate-400">
+                      {b.listingLabel ? `${b.listingLabel} · ` : ""}
+                      {centsToUsd(b.total_value_cents)} value
+                    </span>
                   </span>
                 </Link>
               </li>

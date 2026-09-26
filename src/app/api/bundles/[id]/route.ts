@@ -65,7 +65,8 @@ export async function GET(request: Request, { params }: Params) {
   return NextResponse.json(bundle);
 }
 
-/** PATCH /api/bundles/:id — set status. Cancelling releases stock. */
+/** PATCH /api/bundles/:id — set status (and/or Actual Listing Price +
+ * Shipping Fee via `listingPriceCents`/`shippingCents`). Cancelling releases stock. */
 export async function PATCH(request: Request, { params }: Params) {
   const auth = await authUser();
   if (!auth) return apiError("Unauthorized", 401);
@@ -86,6 +87,24 @@ export async function PATCH(request: Request, { params }: Params) {
 
   const update: Record<string, unknown> = { status };
   if (body?.ebayListingId) update.ebay_listing_id = String(body.ebayListingId);
+
+  // Actual Listing Price / Shipping Fee (captured when marking listed, editable after).
+  const centsFields: Array<[key: string, column: string]> = [
+    ["listingPriceCents", "listing_price_cents"],
+    ["shippingCents", "shipping_cents"],
+  ];
+  for (const [wire, column] of centsFields) {
+    const raw = body?.[wire];
+    if (raw === undefined) continue; // field not sent
+    if (raw == null) {
+      update[column] = null;
+      continue;
+    }
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0) {
+      return apiError(`${wire} must be null or a non-negative integer (cents)`);
+    }
+    update[column] = raw;
+  }
 
   let releasedCount: number | null = null;
   if (status === "cancelled" && bundle.status !== "cancelled" && bundle.status !== "sold") {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { NumberDollars } from "@/components/ui/Modal";
 import { bundlePriceCents, bundleToCsv } from "@/lib/bundle";
 import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, pluralize, truncated } from "@/lib/utils";
 import type { BundleStatus, BundleWithItems, Location } from "@/lib/types";
@@ -23,6 +24,9 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
+  const [listingPanel, setListingPanel] = useState<null | "list" | "edit">(null);
+  const [listingPrice, setListingPrice] = useState<number | null>(null);
+  const [listingShipping, setListingShipping] = useState<number | null>(null);
 
   useEffect(() => {
     fetch("/api/locations")
@@ -69,6 +73,36 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
         );
         router.refresh();
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openListingPanel(mode: "list" | "edit") {
+    setListingPanel(mode);
+    setListingPrice(bundle.listing_price_cents ?? bundlePriceCents(bundle.total_value_cents));
+    setListingShipping(bundle.shipping_cents ?? null);
+    setError(null);
+  }
+
+  async function saveListing(markListed: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api(`/api/bundles/${bundle.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: markListed ? "listed" : bundle.status,
+          listingPriceCents: listingPrice ?? null,
+          shippingCents: listingShipping ?? null,
+        }),
+      });
+      setBundle(updated);
+      setListingPanel(null);
+      flash(markListed ? "Marked listed — Actual Listing Price saved" : "Listing price updated");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Update failed");
     } finally {
@@ -147,7 +181,7 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
                 {hasDraft ? "Edit listing draft" : "Generate listing draft"}
               </button>
               {bundle.status === "allocated" && (
-                <button className="btn btn-secondary" onClick={() => setStatus("listed")} disabled={busy}>
+                <button className="btn btn-secondary" onClick={() => openListingPanel("list")} disabled={busy}>
                   Mark listed
                 </button>
               )}
@@ -188,6 +222,56 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
       </div>
 
       {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+
+      {/* Actual Listing Price / Shipping Fee */}
+      {listingPanel && (
+        <div className="card space-y-3">
+          <p className="text-sm font-bold">
+            {listingPanel === "list" ? "Mark listed" : "Edit listing price"}
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="label">Actual Listing Price</label>
+              <NumberDollars valueCents={listingPrice} onChange={setListingPrice} />
+            </div>
+            <div>
+              <label className="label">Shipping Fee</label>
+              <NumberDollars valueCents={listingShipping} onChange={setListingShipping} />
+            </div>
+          </div>
+          <p className="text-xs text-slate-400">
+            {listingPanel === "list"
+              ? "The price you actually listed it for on eBay (prefilled with the suggested bundle price) and what you charge for shipping."
+              : "Saved values are used to prefill Gross / Shipping when you record this bundle as sold."}
+          </p>
+          <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+            <button className="btn btn-ghost" onClick={() => setListingPanel(null)} disabled={busy}>
+              Cancel
+            </button>
+            <button className="btn btn-primary" onClick={() => saveListing(listingPanel === "list")} disabled={busy}>
+              {busy ? "Saving…" : listingPanel === "list" ? "Mark listed" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
+      {(bundle.listing_price_cents != null || bundle.shipping_cents != null) && !listingPanel && (
+        <p className="flex flex-wrap items-center gap-x-2 text-sm">
+          <span className="font-semibold text-indigo-700">
+            Actual Listing Price{" "}
+            {bundle.listing_price_cents != null ? centsToUsd(bundle.listing_price_cents) : "—"}
+          </span>
+          <span className="text-slate-400">
+            · Shipping Fee {bundle.shipping_cents != null ? centsToUsd(bundle.shipping_cents) : "—"}
+          </span>
+          <button
+            className="text-xs font-medium text-indigo-600 hover:underline"
+            onClick={() => openListingPanel("edit")}
+            disabled={busy}
+          >
+            Edit
+          </button>
+        </p>
+      )}
 
       {/* Draft editor */}
       {draft && (

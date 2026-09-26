@@ -229,7 +229,17 @@ export function SalesClient({
               </select>
             </div>
             <div className="col-span-2">
-              <select className="input" value={bundleId} onChange={(e) => { setBundleId(e.target.value); setItemId(""); }}>
+              <select
+                className="input"
+                value={bundleId}
+                onChange={(e) => {
+                  setBundleId(e.target.value);
+                  setItemId("");
+                  const picked = bundles.find((b) => b.id === e.target.value);
+                  if (picked?.listing_price_cents != null) setGross(picked.listing_price_cents);
+                  if (picked?.shipping_cents != null) setShipping(picked.shipping_cents);
+                }}
+              >
                 <option value="">— Bundle —</option>
                 {bundles
                   .filter((b) => b.status !== "sold" && b.status !== "cancelled")
