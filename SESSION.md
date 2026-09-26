@@ -7,10 +7,10 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**eBay auto-fill for Actual Listing Price + Shipping Fee** (code complete,
-typecheck/lint green, **NOT yet committed**, **migration `0012` NOT yet
-applied**): user request — pull those two fields from their own synced eBay
-listings instead of typing them. Decisions (user-confirmed):
+**eBay auto-fill for Actual Listing Price + Shipping Fee** (committed
+`6ca69d9`, pushed, typecheck/lint green; **migration `0012` applied** by the
+user, REST-verified): user request — pull those two fields from their own
+synced eBay listings instead of typing them. Decisions (user-confirmed):
 
 - Matching = **auto-suggest + confirm**: the unlinked dropdown preselects the
   `(suggested)` listing scored from the bundle's listing-draft title (shared
@@ -20,17 +20,18 @@ listings instead of typing them. Decisions (user-confirmed):
   if eBay errors it falls back to the last-synced row and the response says
   `_synced: false` (toast notes it).
 
-Shipped this session (uncommitted):
+Shipped this session (committed `6ca69d9`):
 
 1. **`listings.shipping_cents`** (`supabase/migrations/0012_listings_shipping.sql`,
-   idempotent, **NOT applied yet — user runs it in the SQL editor**):
+   idempotent, **applied by the user 2026-09-26 — REST-verified**, all rows
+   still null until the next sync):
    `parseTradingItem` now extracts the first `ShippingServiceCost` from the
    GetMyeBaySelling ActiveList XML into the sync payload. Probe
    `scripts/probe-trading-shipping.ts` (read-only, reads `.env.local`, AES-GCM
    token decrypt + refresh-grant fallback) confirmed **branch A: 12/13 items
-   carry it** (sample $5.99) → no per-item GetItem needed. **Until 0012 is
-   applied EVERY sync write fails** (the payload always includes the key →
-   PGRST204) — apply before clicking "Sync now" or testing the fill.
+   carry it** (sample $5.99) → no per-item GetItem needed. The column must be
+   applied BEFORE deploy/sync everywhere (payload always includes the key →
+   PGRST204 sync failures without it).
 2. **`POST /api/bundles/[id]/ebay-fill`** (`src/app/api/bundles/[id]/ebay-fill/`):
    body `{ ebayListingId? }` (omitted = refresh the current link) → syncs
    (best-effort try/catch) → reads the linked `listings` row (409
@@ -104,11 +105,11 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 ## What We Did (this session)
 
 1. **eBay auto-fill for Actual Listing Price / Shipping Fee** (Current
-   Objective — uncommitted; file list in its own section below): shipping
-   parse in the listings sync (probe-verified branch A), migration `0012`
-   (NOT yet applied), `POST /api/bundles/[id]/ebay-fill`, the bundle-detail
-   "eBay listing" card with draft-title suggestion, PATCH unlink
-   (`ebayListingId: null`), info-line listed/sold gap fix.
+   Objective — committed `6ca69d9`, pushed; file list in its own section
+   below): shipping parse in the listings sync (probe-verified branch A),
+   migration `0012` **applied by the user**, `POST /api/bundles/[id]/ebay-fill`,
+   the bundle-detail "eBay listing" card with draft-title suggestion, PATCH
+   unlink (`ebayListingId: null`), info-line listed/sold gap fix.
 2. **Actual Listing Price + Shipping Fee** (committed `e7aa06d`, pushed):
    migration `0011` **applied by the user** (REST-verified: both columns
    return, null on the 2 listed bundles), PATCH accepts `listingPriceCents`/
@@ -259,20 +260,17 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## Current State
 
-- `origin/main` = `e7aa06d` (Actual Listing Price / Shipping Fee, pushed;
-  before that `4f376b5` preview fix + `e533545` docs). Working tree
-  **dirty**: the eBay auto-fill feature is fully coded but **uncommitted**
-  (awaiting user's commit request) — see Files Changed below.
+- `origin/main` = `6ca69d9` (eBay auto-fill, pushed; before that `e7aa06d`
+  listing-price fields, `4f376b5` preview fix + `e533545` docs). Working
+  tree **clean**.
 - `typecheck` + `lint` pass (re-run after the auto-fill feature landed;
   also fixed 3 errors in `scripts/probe-trading-shipping.ts`).
   **`npm run build` not run** — the dev server IS running (pgrep confirmed);
   building would clobber `.next/` and 500 every dynamic route. Route
   smoke-tested through it: `POST /api/bundles/[id]/ebay-fill` → 401 JSON.
-- **Migration `0012` NOT applied yet** (`0012_listings_shipping.sql` —
-  `listings.shipping_cents`; REST-verified NOT applied, 42703). **The user
-  must apply it BEFORE any sync/fill test** — the sync payload now always
-  includes `shipping_cents`, so every sync write 500s until the column
-  exists (manual "Sync now", the daily cron, and the fill route's sync).
+- **Migration `0012` IS applied** (`0012_listings_shipping.sql` —
+  `listings.shipping_cents`; REST-verified 2026-09-26; rows null until the
+  first sync writes them — the auto-fill's sync-back fills them).
 - **Migration `0011` IS applied** (REST-verified: both `bundles` columns
   return; both bundles currently null). **Migration `0010` IS applied** (verified via REST this session: the
   column returns, all rows null). **Dates are NOT filled yet** — the user
@@ -345,11 +343,10 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = eBay auto-fill)
+## Files Changed (committed `6ca69d9` = eBay auto-fill)
 
 - `supabase/migrations/0012_listings_shipping.sql` (new) — nullable
-  `listings.shipping_cents int`, idempotent. **NOT applied yet** (user runs
-  it in the SQL editor first; syncs fail until then).
+  `listings.shipping_cents int`, idempotent. **Applied by the user**
 - `scripts/probe-trading-shipping.ts` (new) — read-only probe: decrypts the
   stored eBay token (AES-GCM `enc:` + refresh-grant fallback), calls
   GetMyeBaySelling, greps ActiveList XML for shipping tags → confirmed
@@ -549,16 +546,17 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Problems / Blockers
 
-1. **eBay auto-fill not applied/browser-verified yet** — migration `0012`
-   is NOT applied (42703 REST-verified; **until then EVERY listings sync
-   write fails** because the payload always carries `shipping_cents`). Order:
-   apply `0012_listings_shipping.sql` → reload the bundle detail → the
-   "eBay listing" card should preselect the `(suggested)` listing (MTG
-   bundle → "…Lorwyn Eclipsed: Bundle and Misc Boosters" $105; MTG2 →
-   "…Secret Lair, Deck, and 4x Boosters" $125) → **Link & fill price &
-   shipping** → info line shows the filled price + shipping, status still
-   `listed` → **Refresh from eBay** re-syncs; **Unlink** keeps the prices.
-   Sale form should prefill Gross/Shipping from the filled bundle.
+1. **eBay auto-fill not browser-verified yet** — committed `6ca69d9`,
+   migration `0012` applied (REST-verified; rows still null until the first
+   sync writes them). Checklist: reload the bundle detail → the "eBay
+   listing" card should preselect the `(suggested)` listing (MTG bundle →
+   "…Lorwyn Eclipsed: Bundle and Misc Boosters" $105; MTG2 → "…Secret Lair,
+   Deck, and 4x Boosters" $125) → **Link & fill price & shipping** (a few
+   seconds — syncs eBay live; buttons disable) → info line shows the filled
+   price + shipping (first fill backfills `shipping_cents` on the other synced
+   listings too), status still `listed` → **Refresh from eBay** re-syncs;
+   **Unlink** keeps the prices. Bundles list shows actual price + `ship $Y`;
+   sale form prefills Gross/Shipping from the filled bundle.
 2. **Actual Listing Price / Shipping Fee manual flow not browser-verified**
    — committed `e7aa06d`, migration `0011` applied: bundle detail →
    "Mark listed" → panel with **Actual Listing Price** prefilled at the
@@ -609,9 +607,9 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Next Steps (priority order)
 
-1. Apply migration `0012` (user, SQL editor — **before any sync/fill test**),
-   then browser-verify the eBay auto-fill flow (Problem 1) — commit only when
-   the user asks.
+1. Browser-verify the eBay auto-fill flow (Problem 1; migration `0012`
+   applied, feature committed `6ca69d9`) — nothing else needed before the
+   test.
 2. Browser-verify the Actual Listing Price manual flow (Problem 2; migration
    `0011` already applied).
 3. Browser-verify the bundle preview fix (Problem 3).
