@@ -41,7 +41,7 @@ async function probeInventory(): Promise<void> {
     process.exit(1);
   }
   const res = await fetch(
-    `${baseUrl}/rest/v1/items?select=name,kind,set_code,release_date&order=kind,name`,
+    `${baseUrl}/rest/v1/items?select=name,kind,upc,set_code,release_date&order=kind,name`,
     { headers: { apikey: key, Authorization: `Bearer ${key}` } },
   );
   if (!res.ok) {
@@ -51,6 +51,7 @@ async function probeInventory(): Promise<void> {
   const items = (await res.json()) as {
     name: string;
     kind: string;
+    upc: string | null;
     set_code: string | null;
     release_date: string | null;
   }[];
@@ -67,6 +68,8 @@ async function probeInventory(): Promise<void> {
         r.source === "set_name" ? `set ${r.detail}` :
         r.source === "set_code" ? `set_code ${r.detail}` :
         r.source === "secret_lair" ? `wiki "${r.detail}"` :
+        r.source === "pokemon_schedule" ? `schedule "${r.detail}"` :
+        r.source === "upc_catalog" ? `catalog upc ${r.detail}` :
         r.source;
       console.log(`DATE  ${r.date}  [${source}]  ${item.name}`);
     } else {

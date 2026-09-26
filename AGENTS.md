@@ -159,28 +159,44 @@ Copy `.env.local.example` → `.env.local`. Keys:
     `resolveReleaseDate`/`resolveReleaseDateDetailed` in
     `src/lib/release-dates.ts` (used by the refresh-price route AND the
     probe) tries, in order — loose → the card's Scryfall `released_at`;
-    `set_code` → `getSetReleaseDate`; sealed/open → **Secret Lairs via
-    mtg.wiki** (`src/lib/secret-lair.ts` `lookupSecretLairDate`:
-    membership-verified — the drop's name must appear verbatim on a
-    `Superdrop|Drop Series|Commander Deck` page, `Secret Lair/…` hub
-    subpages excluded, and ALL owning pages must agree on ONE date, else
-    blank; never guesses) or else **product name → Scryfall set**
-    (`findSetForProduct` in `scryfall.ts`: text before `:` minus retail
-    words, exact-normalized → set-name-contains → token-subset tiers,
-    token/promo/memorabilia/alchemy sets filtered, unique main-set candidate
-    or blank; `Secret Lair*` names hard-excluded). eBay is NOT a date source
-    (Browse search never returns item aspects; TCG listing details only
-    carry a year-only "Year Manufactured"). Discovered dates cache on
+    `set_code` → `getSetReleaseDate`; `upc` → **`upc_catalog.release_date`**
+    (seeded manually or cached from an earlier discovery; plain REST fetch,
+    NOT `createAdminClient` — the realtime socket throws under plain Node/
+    tsx scripts, so the resolver stays script-safe like the probes); sealed/
+    open → **Secret Lairs via mtg.wiki** (`src/lib/secret-lair.ts`
+    `lookupSecretLairDate`: membership-verified — the drop's name must appear
+    verbatim on a `Superdrop|Drop Series|Commander Deck` page, `Secret
+    Lair/…` hub subpages excluded, and ALL owning pages must agree on ONE
+    date, else blank; never guesses), **Pokémon names via the official press
+    schedule** (`/^pok[eé]mon/i` → `fetchPokemonSchedule()` exported from
+    `releases.ts` — same `press.pokemon.com/…Schedule?period=All&types=3`
+    regex the dashboard uses, but kept WITHOUT the past-date filter and
+    shared under its own 6h cache; item tokens minus product words
+    [booster/box/ETB/mega/evolution/…] must ALL appear in schedule rows and
+    all matches must agree on ONE date, else blank — early-returns before
+    Scryfall so a Pokémon name can never hit an MTG set), or else **product
+    name → Scryfall set** (`findSetForProduct` in `scryfall.ts`: text before
+    `:` minus retail words, exact-normalized → set-name-contains →
+    token-subset tiers, token/promo/memorabilia/alchemy sets filtered,
+    unique main-set candidate or blank; `Secret Lair*` names hard-excluded).
+    eBay is NOT a date source (Browse search never returns item aspects; TCG
+    listing details only carry a year-only "Year Manufactured"). Discovered
+    dates cache on
     `upc_catalog.release_date` (`cacheCatalogReleaseDate`, blank-fill only)
     so one discovery serves every row + future scans with that barcode —
-    the scan route inherits it on create and backfills blanks. Bulk:
+    the scan route inherits it on create and backfills blanks. Seeding the
+    catalog works too: all three Topps Chrome barcodes (887521156788/832/870
+    = *2025 Topps Chrome Football*, identity via eBay GTIN title, date
+    2026-04-15 from ripped.topps.com) were seeded once and now resolve for
+    every row + future scan. Bulk:
     `POST /api/inventory/refresh-price` `{ scope: "no_release_date" }`
     (≤50, per-product dedupe, prices untouched) — Inventory header button
     "Fill release dates (N)". Verify with
     `npx tsx scripts/probe-release-dates.ts --inventory` (runs the
     production resolver over every item, prints each pick + source for
-    review; current data: 59/70 resolvable, 11 manual — Pokémon/Topps/
-    Yu-Gi-Oh/Festival + genuinely ambiguous Secret Lairs).
+    review; current data: 65/70 resolvable, 5 manual — Yu-Gi-Oh/Festival +
+    genuinely ambiguous Secret Lairs; Pokémon sets + the Topps barcodes now
+    automatic).
   - Sealed item identity is `(owner_id, upc, location_id, name)` (partial
     unique index `items_upc_loc_name_unique` in `0005_item_name_identity.sql`):
     products sharing a barcode (e.g. Final Fantasy commander decks) stay
@@ -282,6 +298,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
   ascending then TBA; each source in try/catch (partial results + `errors[]`);
   6h in-memory cache (5 min when empty). Never throws — dashboard degrades to
   an empty-state message. `scripts/probe-releases.ts` prints the parsed list.
+  The Pokémon table parse is exported as `fetchPokemonSchedule()` (full
+  `period=All` rows incl. past, own 6h cache) and shared with the release-date
+  resolver; only `fetchPokemonReleases()` applies the `date < today` drop.
 
 ## Bundle generation
 

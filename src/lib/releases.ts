@@ -123,8 +123,29 @@ async function fetchMtgReleases(today: string): Promise<UpcomingRelease[]> {
   return out;
 }
 
-/** Future Pokémon TCG products from the official press-site schedule table. */
-async function fetchPokemonReleases(today: string): Promise<UpcomingRelease[]> {
+/** One row of the official press-site TCG product schedule. */
+export interface PokemonScheduleRow {
+  name: string;
+  /** `YYYY-MM-DD`, or null when unparseable/TBA. */
+  date: string | null;
+  url: string;
+}
+
+const SCHEDULE_TTL_MS = 6 * 60 * 60 * 1000;
+let scheduleCache: { at: number; rows: PokemonScheduleRow[] } | null = null;
+
+/**
+ * Full press.pokemon.com TCG schedule (`period=All` — includes PAST
+ * releases), cached 6h. Shared by the dashboard's upcoming list (which
+ * filters `date < today` itself) and the release-date resolver (which needs
+ * the past). Never caches an empty parse (site change / block) so callers
+ * with their own retry logic keep working.
+ */
+export async function fetchPokemonSchedule(): Promise<PokemonScheduleRow[]> {
+  if (scheduleCache && Date.now() - scheduleCache.at < SCHEDULE_TTL_MS) {
+    return scheduleCache.rows;
+  }
+
   const html = await fetchText(
     "https://press.pokemon.com/en/Items/Schedule?period=All&types=3",
     "Mozilla/5.0 (goodwhilly release calendar)",
@@ -132,7 +153,7 @@ async function fetchPokemonReleases(today: string): Promise<UpcomingRelease[]> {
 
   const rowRe =
     /<a class="prod-name" href="([^"]+)">([\s\S]*?)<\/a>[\s\S]*?<td class="td-date">\s*([\s\S]*?)\s*<\/td>/g;
-  const out: UpcomingRelease[] = [];
+  const rows: PokemonScheduleRow[] = [];
   let m: RegExpExecArray | null;
   while ((m = rowRe.exec(html)) !== null) {
     const name = decodeEntities(m[2].replace(/<[^>]+>/g, "").trim());
@@ -144,14 +165,30 @@ async function fetchPokemonReleases(today: string): Promise<UpcomingRelease[]> {
       const month = MONTHS.findIndex((name2) => name2.toLowerCase() === dm[1].toLowerCase());
       if (month >= 0) date = `${dm[3]}-${pad(month + 1)}-${pad(Number(dm[2]))}`;
     }
-    if (date && date < today) continue; // already released
     const href = m[1];
-    out.push({
+    rows.push({
       name,
-      label: "Pokémon",
-      game: "pokemon",
       date,
       url: href.startsWith("http") ? href : `https://press.pokemon.com${href}`,
+    });
+  }
+
+  if (rows.length) scheduleCache = { at: Date.now(), rows };
+  return rows;
+}
+
+/** Future Pokémon TCG products from the official press-site schedule table. */
+async function fetchPokemonReleases(today: string): Promise<UpcomingRelease[]> {
+  const rows = await fetchPokemonSchedule();
+  const out: UpcomingRelease[] = [];
+  for (const row of rows) {
+    if (row.date && row.date < today) continue; // already released
+    out.push({
+      name: row.name,
+      label: "Pokémon",
+      game: "pokemon",
+      date: row.date,
+      url: row.url,
     });
   }
   return out;
