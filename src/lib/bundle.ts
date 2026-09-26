@@ -84,6 +84,16 @@ export interface BundleGenOptions {
    * The dup rules apply in both modes.
    */
   dominant?: boolean;
+  /**
+   * Build around a specific item (its `id` in the passed items): the item is
+   * ALWAYS included and bypasses the 60%-of-target single-unit rule.
+   * `dominant: true` anchors every trial on it (tier cap, anchor-first
+   * ordering); `dominant: false` seeds it into the plain mix. The bundle is
+   * built from the item's own game group (`buildBundleAcrossGames`). An id
+   * not present in the items yields an empty result — callers surface that
+   * as a 409.
+   */
+  anchorItemId?: string;
 }
 
 /** Score a trial's fill; null when outside the ±tolerance window. */
@@ -115,12 +125,15 @@ function lineTotal(lines: BundleLine[]): number {
 /**
  * Plain mix: repeated randomized trials drawing value × remaining-stock
  * weighted items until the fill window is reached; best-scoring trial wins.
+ * `anchorIndex >= 0` seeds every trial (and the fallback) with one unit of
+ * that item first — it is always included, dup rules still apply to it.
  */
 function mixBundle(
   eligible: Item[],
   targetCents: number,
   toleranceCents: number,
   rng: () => number,
+  anchorIndex = -1,
 ): BundleResult {
   let best: Map<number, number> | null = null;
   let bestScore = Infinity;
@@ -130,6 +143,12 @@ function mixBundle(
     const remaining = eligible.map((item) => maxUnits(item));
     let running = 0;
     let safety = 0;
+
+    if (anchorIndex >= 0) {
+      lines.set(anchorIndex, 1);
+      remaining[anchorIndex]--;
+      running += eligible[anchorIndex].value_cents!;
+    }
 
     const weightOf = (i: number) =>
       remaining[i] > 0 ? Math.sqrt(eligible[i].value_cents!) * Math.sqrt(remaining[i]) : 0;
@@ -192,11 +211,21 @@ function mixBundle(
 
   if (!best) {
     // Fallback: fill greedily without ever passing target + tolerance, and
-    // stop as soon as we've reached the target.
+    // stop as soon as we've reached the target. The anchor goes in first.
     const fallback: BundleLine[] = [];
     let fallbackRunning = 0;
-    for (const item of eligible) {
+    if (anchorIndex >= 0) {
+      fallback.push({
+        item: eligible[anchorIndex],
+        quantity: 1,
+        valueCents: eligible[anchorIndex].value_cents!,
+      });
+      fallbackRunning += eligible[anchorIndex].value_cents!;
+    }
+    for (let i = 0; i < eligible.length; i++) {
+      if (i === anchorIndex) continue; // already in as one unit
       if (fallbackRunning >= targetCents) break;
+      const item = eligible[i];
       const unit = item.value_cents!;
       const room = targetCents + toleranceCents - fallbackRunning;
       const perItem = Math.min(maxUnits(item), Math.floor(room / unit));
@@ -218,17 +247,23 @@ function mixBundle(
  * and never overshooting the window — one piece clearly dominates, the rest
  * are its lower tier. Lines come back anchor-first, fillers value-descending.
  * Fallback keeps the anchor but drops the tier cap (dup caps still apply).
+ * `fixedAnchorIndex >= 0` pins every trial to that item instead of the
+ * weighted top-5 draw (the explicit "build around item" pick).
  */
 function dominantBundle(
   eligible: Item[],
   targetCents: number,
   toleranceCents: number,
   rng: () => number,
+  fixedAnchorIndex = -1,
 ): BundleResult {
-  const top = eligible
-    .map((_, index) => index)
-    .sort((a, b) => eligible[b].value_cents! - eligible[a].value_cents!)
-    .slice(0, 5);
+  const top =
+    fixedAnchorIndex >= 0
+      ? [fixedAnchorIndex]
+      : eligible
+          .map((_, index) => index)
+          .sort((a, b) => eligible[b].value_cents! - eligible[a].value_cents!)
+          .slice(0, 5);
   const topWeight = top.reduce((sum, i) => sum + Math.sqrt(eligible[i].value_cents!), 0);
 
   let best: Map<number, number> | null = null;
@@ -342,6 +377,11 @@ function dominantBundle(
  * `DUP_MAX_UNITS` of the same product per bundle, bounded by stock; anything
  * $20+ appears at most once.
  *
+ * Anchor (`opts.anchorItemId`): that item is always included and skips the
+ * 60%-of-target rule below; with `dominant: true` it anchors every trial,
+ * with `dominant: false` it is seeded into each mix trial. An id that isn't
+ * in `items` returns an empty result (callers turn that into a 409).
+ *
  * Slots carry the item itself and are indexed locally — never with a position
  * from the pre-filter array (that mix caused TypeErrors when expensive items
  * were filtered out).
@@ -358,16 +398,26 @@ export function generateBundle(
 ): BundleResult {
   const rng = mulberry32(Math.floor(Math.random() * 2 ** 31));
 
+  const anchorId = opts.anchorItemId?.trim() || null;
+  const anchor = anchorId ? items.find((i) => i.id === anchorId) ?? null : null;
+
   // Mystery bundles should hold several items: a single unit may not be worth
-  // more than ~60% of the target.
-  const eligible = items.filter(
-    (item) => item.quantity > 0 && (item.value_cents ?? 0) > 0 && item.value_cents! <= targetCents * 0.6,
-  );
+  // more than ~60% of the target — except an explicitly picked anchor.
+  const eligible = items.filter((item) => {
+    if (item.quantity <= 0 || (item.value_cents ?? 0) <= 0) return false;
+    if (anchor && item.id === anchor.id) return true;
+    return item.value_cents! <= targetCents * 0.6;
+  });
 
   if (!eligible.length) return { lines: [], totalCents: 0, targetCents };
 
-  if (opts.dominant ?? true) return dominantBundle(eligible, targetCents, toleranceCents, rng);
-  return mixBundle(eligible, targetCents, toleranceCents, rng);
+  const anchorIndex = anchor ? eligible.findIndex((i) => i.id === anchor.id) : -1;
+  if (anchorId && anchorIndex < 0) return { lines: [], totalCents: 0, targetCents };
+
+  if (opts.dominant ?? true) {
+    return dominantBundle(eligible, targetCents, toleranceCents, rng, anchorIndex);
+  }
+  return mixBundle(eligible, targetCents, toleranceCents, rng, anchorIndex);
 }
 
 export interface GameBundleResult extends BundleResult {
@@ -398,6 +448,17 @@ export function buildBundleAcrossGames(
     const group = groups.get(key);
     if (group) group.items.push(item);
     else groups.set(key, { label, items: [item] });
+  }
+
+  // Anchored: build from the anchor's OWN game group (games never mix; the
+  // route already validated any explicit game filter against it).
+  if (opts.anchorItemId) {
+    const anchor = items.find((i) => i.id === opts.anchorItemId);
+    if (!anchor) return null;
+    const group = groups.get(gameOf(anchor.category).toLowerCase());
+    if (!group) return null;
+    const result = generateBundle(group.items, targetCents, toleranceCents, opts);
+    return result.lines.length ? { ...result, game: group.label } : null;
   }
 
   if (game != null) {

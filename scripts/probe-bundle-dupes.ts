@@ -7,7 +7,9 @@ import type { Item } from "@/lib/types";
  * - under-$20 items are duplicate-eligible (max 5 of the same per bundle)
  * - $20+ items must appear at most once
  * - dominant mode: first line = most valuable, every filler ≤ 50% of anchor
- * Exits non-zero when a hard rule (dup caps/stock) is violated.
+ * Plus anchor scenarios (`anchorItemId`): the picked item is ALWAYS in the
+ * bundle, leads it in anchor mode, and bypasses the 60%-of-target rule.
+ * Exits non-zero when a hard rule (dup caps/stock/anchor) is violated.
  *
  * Usage: npx tsx scripts/probe-bundle-dupes.ts [runs] [targetCents]
  */
@@ -126,6 +128,69 @@ function pct(n: number, d: number): string {
   return d ? `${((n / d) * 100).toFixed(0)}%` : "n/a";
 }
 
+interface AnchorStats {
+  runs: number;
+  present: number;
+  first: number;
+  tierOk: number;
+  fillSum: number;
+  violations: string[];
+}
+
+/** `anchorItemId` scenarios: presence + (dominant) first/tier are hard rules. */
+function runAnchor(
+  anchor: Item,
+  dominant: boolean,
+  runs: number,
+  targetCents: number,
+): AnchorStats {
+  const s: AnchorStats = { runs, present: 0, first: 0, tierOk: 0, fillSum: 0, violations: [] };
+  const anchorValue = anchor.value_cents ?? 0;
+
+  for (let run = 0; run < runs; run++) {
+    const result = generateBundle(items, targetCents, undefined, {
+      dominant,
+      anchorItemId: anchor.id,
+    });
+    if (!result.lines.length) {
+      s.violations.push(`empty bundle with anchor ${anchor.name} (dominant=${dominant})`);
+      continue;
+    }
+    s.fillSum += result.totalCents;
+
+    const anchorLine = result.lines.find((l) => l.item.id === anchor.id);
+    if (!anchorLine) {
+      s.violations.push(
+        `anchor ${anchor.name} MISSING from bundle (dominant=${dominant}, target=${targetCents})`,
+      );
+      continue;
+    }
+    s.present++;
+    if (dominant) {
+      if (result.lines[0].item.id === anchor.id) s.first++;
+      else s.violations.push(`anchor ${anchor.name} not first (got ${result.lines[0].item.name})`);
+      if (result.lines.slice(1).every((l) => (l.item.value_cents ?? 0) <= anchorValue * 0.5)) {
+        s.tierOk++;
+      }
+    }
+
+    for (const line of result.lines) {
+      const q = line.quantity;
+      const value = line.item.value_cents ?? 0;
+      if (value >= DUP_ELIGIBLE_VALUE_CENTS && q > 1) {
+        s.violations.push(`${line.item.name} ($${(value / 100).toFixed(2)}) duplicated ×${q}`);
+      }
+      if (q > DUP_MAX_UNITS) {
+        s.violations.push(`${line.item.name} ×${q} exceeds the ${DUP_MAX_UNITS}-cap`);
+      }
+      if (q > line.item.quantity) {
+        s.violations.push(`${line.item.name} ×${q} exceeds stock ${line.item.quantity}`);
+      }
+    }
+  }
+  return s;
+}
+
 function main() {
   const runs = Number(process.argv[2] ?? 200);
   const targetCents = Number(process.argv[3] ?? 11111); // $100 price → fill target
@@ -154,12 +219,49 @@ function main() {
     violations.push(...s.violations);
   }
 
+  // --- anchorItemId scenarios ---
+  const expensiveAnchor = items.find((i) => i.name === "Big 3")!; // $59, qty 1
+  const cheapAnchor = items.find((i) => i.name === "Cheap 1")!; // $5, qty 3
+  const smallTarget = 5556; // $50 price → ~$55.56 contents (60% rule = $33.33)
+
+  const scenarios: Array<{ label: string; stats: AnchorStats; wantFirst: boolean }> = [
+    {
+      label: `anchor · dominant · ${expensiveAnchor.name} ($${(expensiveAnchor.value_cents! / 100).toFixed(0)})`,
+      stats: runAnchor(expensiveAnchor, true, runs, targetCents),
+      wantFirst: true,
+    },
+    {
+      label: `anchor · mix     · ${cheapAnchor.name} ($${(cheapAnchor.value_cents! / 100).toFixed(0)})`,
+      stats: runAnchor(cheapAnchor, false, runs, targetCents),
+      wantFirst: false,
+    },
+    {
+      label: `anchor · 60% bypass · Big 1 ($45) @ target $${(smallTarget / 100).toFixed(2)} (60% = $${((smallTarget * 0.6) / 100).toFixed(2)})`,
+      stats: runAnchor(items.find((i) => i.name === "Big 1")!, true, Math.min(runs, 50), smallTarget),
+      wantFirst: true,
+    },
+  ];
+
+  for (const { label, stats, wantFirst } of scenarios) {
+    console.log(`\n[${label}]`);
+    console.log(`  runs:             ${stats.runs}`);
+    console.log(`  anchor present:   ${pct(stats.present, stats.runs)} (want 100%)`);
+    if (wantFirst) {
+      console.log(`  anchor first:     ${pct(stats.first, stats.runs)} (want 100%)`);
+      console.log(`  fillers ≤50%:     ${pct(stats.tierOk, stats.runs)} (fallbacks may miss)`);
+    }
+    console.log(`  avg fill:         $${(stats.fillSum / Math.max(stats.present, 1) / 100).toFixed(2)}`);
+    violations.push(...stats.violations);
+  }
+
   if (violations.length) {
     console.error(`\nVIOLATIONS (${violations.length}):`);
     for (const v of [...new Set(violations)].slice(0, 20)) console.error(` - ${v}`);
     process.exit(1);
   }
-  console.log("\nAll rules held in both modes: no $20+ duplicates, no line over 5 or over stock.");
+  console.log(
+    "\nAll rules held: no $20+ duplicates, no line over 5 or over stock, anchors always present (and first in anchor mode).",
+  );
 }
 
 main();

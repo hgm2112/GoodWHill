@@ -298,14 +298,31 @@ Copy `.env.local.example` → `.env.local`. Keys:
   take a `dominant` body flag (server default on); the builder checkbox "One
   dominant item" sends it on generate + create. Generation-time only —
   nothing stored on the bundle.
+- **Build around an item** (`BundleGenOptions.anchorItemId`): the generate
+  route's `anchorItemId` forces one specific item into the bundle — it skips
+  the 60%-of-target single-unit rule, pins the bundle to ITS game group (the
+  route 409s `ANCHOR_GAME_MISMATCH` when an explicit `game` contradicts it,
+  `ANCHOR_NOT_ELIGIBLE` when the eligibility query already excluded it:
+  paused / out of stock / no value / kind not in Include), and an id absent
+  from `items` yields an empty result (callers turn that into a 409). The
+  `dominant` flag then picks the mode: `true` = **anchor mode** (every trial
+  seeded with it, line 1, fillers ≤ 50% of it — `fixedAnchorIndex` replaces
+  the top-5 draw), `false` = **include mode** (seeded into each plain-mix
+  trial, position arbitrary; dup caps still apply to the extra units).
+  Builder UI: "Build around item" select (live-filtered to current Include
+  types + game choice, auto-clears when filters exclude it) swaps the
+  dominant checkbox for two radios (Anchor it / Just include it). Only the
+  generate route takes it — `POST /api/bundles` does not (the builder always
+  persists previewed `lines`).
 - **Duplicates** (`maxUnits` in `bundle.ts`, per user rules): items under $20
   may repeat — max 5 of the same product per bundle, bounded by stock; items
   $20+ appear at most once. Draw weight = `sqrt(value) × sqrt(remaining
   allowed units)`, so deep cheap stock repeats naturally while capped/
   exhausted items drop out of the draw. The trial tie-break counts total
   units (soft ~8-piece preference), not distinct lines. Verify with
-  `npx tsx scripts/probe-bundle-dupes.ts` — runs **both modes** (dup rate,
-  anchor-first / ≤50%-tier stats for dominant) and exits non-zero on a rule
+  `npx tsx scripts/probe-bundle-dupes.ts` — runs **both modes** plus anchor
+  scenarios (presence + first-line/tier for anchor mode, include-mode
+  presence, 60% bypass with an oversized anchor) and exits non-zero on a rule
   violation.
 - **Internal 10% bundle discount** (`BUNDLE_DISCOUNT_PCT`): the wire
   `targetCents` is the bundle's SELLING PRICE; the generate route converts it
@@ -327,7 +344,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
   re-read from the DB for money, dup/stock/active rules re-checked, `409
   STALE_PREVIEW` if inventory moved), so preview == created. Without `lines`
   it falls back to generating a fresh bundle (legacy callers; `targetCents` ≥
-  $5 required there). Both routes accept `dominant` (boolean, default true).
+  $5 required there). Both routes accept `dominant` (boolean, default true);
+  the generate route additionally takes `anchorItemId` (see "Build around an
+  item" above) — the create route does not.
 - **Actual Listing Price / Shipping Fee** (`bundles.listing_price_cents` +
   `shipping_cents`, `0011_bundle_listing_fields.sql`): captured on the
   bundle detail page when marking listed — "Mark listed" opens a panel with

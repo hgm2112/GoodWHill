@@ -33,6 +33,9 @@ export function BundleBuilder() {
   const [games, setGames] = useState<string[]>([]);
   const [game, setGame] = useState("__any");
   const [dominant, setDominant] = useState(true);
+  const [allItems, setAllItems] = useState<Item[]>([]);
+  const [anchorId, setAnchorId] = useState("");
+  const [anchorMode, setAnchorMode] = useState<"anchor" | "include">("anchor");
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -68,8 +71,10 @@ export function BundleBuilder() {
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!Array.isArray(data)) return;
+        const items = data as Item[];
+        setAllItems(items);
         const seen = new Map<string, string>();
-        for (const item of data as Item[]) {
+        for (const item of items) {
           // GET /api/inventory now includes paused + out-of-stock rows; the
           // server eligibility query still requires active + quantity > 0.
           if (!item.active || item.quantity <= 0) continue;
@@ -82,6 +87,22 @@ export function BundleBuilder() {
       })
       .catch(() => {});
   }, []);
+
+  // Items the generator would accept as an anchor: in stock, valued, and
+  // matching the current Include types + game choice (value desc for picking).
+  const anchorItems = allItems
+    .filter((it) => {
+      if (!it.active || it.quantity <= 0 || (it.value_cents ?? 0) <= 0) return false;
+      if (!kinds.includes(it.kind)) return false;
+      if (game !== "__any" && gameOf(it.category).toLowerCase() !== game.toLowerCase()) return false;
+      return true;
+    })
+    .sort((a, b) => (b.value_cents ?? 0) - (a.value_cents ?? 0));
+
+  const anchorValid = anchorId === "" || anchorItems.some((it) => it.id === anchorId);
+  useEffect(() => {
+    if (!anchorValid) setAnchorId(""); // filter change excluded the picked item
+  }, [anchorValid]);
 
   async function generate() {
     setBusy(true);
@@ -98,7 +119,9 @@ export function BundleBuilder() {
         body: JSON.stringify({
           targetCents,
           kinds,
-          dominant,
+          ...(anchorId
+            ? { anchorItemId: anchorId, dominant: anchorMode === "anchor" }
+            : { dominant }),
           ...(game !== "__any" ? { game } : {}),
         }),
       });
@@ -215,21 +238,71 @@ export function BundleBuilder() {
           ))}
         </div>
 
-        <label className="mt-4 flex items-start gap-1.5 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            checked={dominant}
-            onChange={(e) => setDominant(e.target.checked)}
-            className="mt-0.5"
-          />
-          <span>
-            One dominant item
-            <span className="block text-xs text-slate-400">
-              Starts with your priciest eligible item and fills with smaller stuff.
-              Uncheck for a random mix.
+        <label className="label mt-4">Build around item</label>
+        <select className="input" value={anchorId} onChange={(e) => setAnchorId(e.target.value)}>
+          <option value="">— No preference —</option>
+          {anchorItems.map((it) => (
+            <option key={it.id} value={it.id}>
+              {truncated(it.name, 55)} · {centsToUsd(it.value_cents ?? 0)} · {it.quantity} in stock
+            </option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-slate-400">
+          Optional — force one specific item into the bundle. Only shows items matching your
+          Include types and game choice.
+        </p>
+
+        {anchorId ? (
+          <div className="mt-3 space-y-1.5">
+            <label className="flex items-start gap-1.5 text-sm text-slate-600">
+              <input
+                type="radio"
+                name="anchorMode"
+                checked={anchorMode === "anchor"}
+                onChange={() => setAnchorMode("anchor")}
+                className="mt-0.5"
+              />
+              <span>
+                Anchor it
+                <span className="block text-xs text-slate-400">
+                  The bundle starts from this item and fills only with stuff worth ≤ half its
+                  value.
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-1.5 text-sm text-slate-600">
+              <input
+                type="radio"
+                name="anchorMode"
+                checked={anchorMode === "include"}
+                onChange={() => setAnchorMode("include")}
+                className="mt-0.5"
+              />
+              <span>
+                Just include it
+                <span className="block text-xs text-slate-400">
+                  Guaranteed to be in the bundle; the rest is a normal random mix.
+                </span>
+              </span>
+            </label>
+          </div>
+        ) : (
+          <label className="mt-3 flex items-start gap-1.5 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              checked={dominant}
+              onChange={(e) => setDominant(e.target.checked)}
+              className="mt-0.5"
+            />
+            <span>
+              One dominant item
+              <span className="block text-xs text-slate-400">
+                Starts with your priciest eligible item and fills with smaller stuff.
+                Uncheck for a random mix.
+              </span>
             </span>
-          </span>
-        </label>
+          </label>
+        )}
 
         <div className="mt-4 flex gap-2">
           <button className="btn btn-primary flex-1" onClick={generate} disabled={busy || creating}>
