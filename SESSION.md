@@ -6,8 +6,24 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**Product release date** (code complete, typecheck/lint green, probe-verified
-**59/70 resolvable**, **NOT yet committed**): `items.release_date` — when the
+**Bundle preview == created bundle** (code complete, typecheck/lint green,
+**NOT yet committed**, needs browser check): user bug — "when i generate a
+bundle, it changes once i create it… it makes a new bundle again". Root
+cause: `BundleBuilder.create()` sent only `name/targetCents/kinds/dominant/
+game` (no lines) and `POST /api/bundles` re-ran `buildBundleAcrossGames`,
+whose RNG seeds from `Math.random()` per call → a fresh random bundle every
+create. Fix: the builder now sends the previewed `lines`
+(`{ itemId, quantity }[]`) + `targetCents: preview.priceCents` +
+`targetValueCents: preview.targetCents`; the create route persists those
+lines as-is (re-read money from the DB, re-check active/stock/dup rules,
+`409 STALE_PREVIEW` "Inventory changed since this preview — regenerate the
+bundle." when they fail, `targetCents ≥ $5` check skipped in this mode since
+it's a generation-only guard). Omitting `lines` keeps the legacy
+generate+persist path. Verify: generate → create → Bundles detail shows the
+identical lines/value/price; Regenerate still re-randomizes.
+
+**Product release date** (committed `524e903`, pushed; probe-verified
+**59/70 resolvable**, **dates NOT yet filled in the DB**): `items.release_date` — when the
 PRODUCT came out, distinct from `acquired_at`. Migration
 `supabase/migrations/0010_item_release_date.sql` (adds `items.release_date` +
 shared `upc_catalog.release_date`) **is already applied** — verified via REST
@@ -52,7 +68,11 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## What We Did (this session)
 
-1. **Product release date feature** (Current Objective — uncommitted;
+1. **Bundle preview == created bundle** (Current Objective — uncommitted;
+   file list in its own section below): create used to re-roll a random
+   bundle; now the previewed lines are sent and persisted exactly (money from
+   the DB, `409 STALE_PREVIEW` guard).
+2. **Product release date feature** (committed `524e903`, pushed;
    file list in its own section below): schema `0010`, item form field
    (`ItemForm` "Released" input + `CardSearchInput`/scryfall search surfacing
    `released_at` prefill), POST/PATCH inventory validate `YYYY-MM-DD`,
@@ -67,7 +87,7 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
    extracted the resolver to `src/lib/release-dates.ts`, and added the
    `--inventory` probe. eBay aspect path dropped after live probing (see
    Current Objective).
-2. **Inventory visibility: paused always shown, sold-out hidden** (committed
+3. **Inventory visibility: paused always shown, sold-out hidden** (committed
    `26e3c0c` + SESSION refresh `4b92db4`, pushed — see Files Changed below).
 
 ## What We Did (2026-09-24 sessions)
@@ -190,10 +210,12 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## Current State
 
-- `origin/main` = `4b92db4` (SESSION refresh for inventory visibility, pushed).
-  Working tree **dirty**: the release-date feature is fully coded but
-  **uncommitted** (awaiting user's commit request).
-- `typecheck` + `lint` pass (re-run after the matcher + SL lookup landed).
+- `origin/main` = `524e903` (release date, pushed; `4b92db4` was the prior
+  SESSION refresh). Working tree **dirty**: the bundle preview==create fix is
+  fully coded but **uncommitted** (awaiting user's commit request).
+- `typecheck` + `lint` pass (re-run after the bundle fix landed). Route probe:
+  unauthenticated `POST /api/bundles` → `401 {"error":"Unauthorized"}` (no
+  bare 500).
   **`npm run build` not run** — dev server is running in the user's
   foreground terminal; building would clobber `.next/` and 500 every dynamic
   route.
@@ -211,7 +233,9 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
 - **Migration `0009` applied** (SQL editor by the user, 2026-09-24). The
   price-history feature has not been browser-verified yet.
-- Bundle discount + duplicates + dominant toggle NOT browser-checked yet. No
+- **Bundle preview==create NOT browser-checked yet** (generate → create →
+  Bundles detail must show the identical lines/value/price). Bundle discount
+  + duplicates + dominant toggle NOT browser-checked yet. No
   browser check of price history either. Inventory visibility (paused shown,
   sold-out hidden) also not browser-checked yet.
 - Data (REST-verified this session): **70 items · 248 units** — 69 sealed +
@@ -253,7 +277,23 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = product release date)
+## Files Changed (this session, UNCOMMITTED = bundle preview fix)
+
+- `src/app/api/bundles/route.ts` — new `resultFromLines()` helper (validates
+  `{ itemId, quantity }[]`, merges dup ids, re-fetches owner-scoped rows,
+  enforces active/stock/`value_cents > 0` + dup caps ($20+ → 1, <$20 →
+  ≤ min(5, stock)), builds the result from **DB** money); POST branches: with
+  `lines` → persist as previewed (`target_value_cents` from `targetValueCents`,
+  `targetCents ≥ $5` check skipped), without → legacy generate path; failures
+  → `409 STALE_PREVIEW` (or `400` malformed / `500` DB).
+- `src/components/BundleBuilder.tsx` — `create()` now sends `lines`
+  (preview item ids + quantities), `targetCents: preview.priceCents`,
+  `targetValueCents: preview.targetCents`; dropped `kinds`/`dominant`/`game`.
+- `AGENTS.md` — bundle-generate bullet (lines contract + STALE_PREVIEW) and
+  discount bullet (target_value_cents source) updated.
+  `SESSION.md` — this file.
+
+## Files Changed (committed `524e903` = product release date)
 
 - `supabase/migrations/0010_item_release_date.sql` (new) — nullable
   `items.release_date date` + `upc_catalog.release_date date`, idempotent.
@@ -394,56 +434,63 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Problems / Blockers
 
-1. **Release date not filled/browser-verified yet** — migration `0010` is
+1. **Bundle preview==create not browser-verified yet** — the fix is coded
+   (typecheck/lint green; unauth `POST /api/bundles` → 401 JSON). Generate a
+   bundle → Create → open it on the Bundles tab: the lines/value/price must
+   be identical to the preview; "Regenerate" must still re-randomize; a stale
+   preview (item paused/sold out since) should show the inline "Inventory
+   changed since this preview — regenerate the bundle." error. Uncommitted.
+2. **Release date not filled/browser-verified yet** — migration `0010` is
    applied (REST-verified) and the probe resolves **59/70**, but no dates
    are written to the DB yet: have the user click "Fill release dates (N)"
    (2 clicks: cap 50), then check the card "Released" lines, scan displays,
    and the form field. 11 rows stay manual by design: Pokémon×3, Topps×3,
    Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna Food
    Token, Command Tower, Inked Foil Edition).
-2. **Bundle discount + duplicates + dominant toggle not browser-exercised
+3. **Bundle discount + duplicates + dominant toggle not browser-exercised
    yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
    create → detail/list show price · value; CSV has both rows; an old bundle
    shows price = value × 0.9. Duplicates: probe-verified (56–71% dup rate, 0
    violations); eyeball one real generate for `×N` lines on multi-copy
    under-$20 stock. Dominant: default-checked bundle leads with the priciest
    line; unchecking the box gives the old mix.
-3. **Inventory visibility not browser-verified** — paused rows always shown
+4. **Inventory visibility not browser-verified** — paused rows always shown
    (red ring + "PAUSED · hidden from store" overlay, no more Show-paused
    toggle); sold-out rows hidden unless "Show out of stock (N)" is checked
    (revealed rows keep the red `×0`); sale dropdown no longer lists 0-stock
    items.
-4. **Price history not browser-verified** (migration is in; check
+5. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
-5. **Dashboard releases not visually checked in a browser** — code + probe
+6. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-6. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+7. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-7. **`npm run build` not run this session** (blocked by the running dev server).
-8. **Temur Roar art** — the deck is now kind `open` with price + picture, but
+8. **`npm run build` not run this session** (blocked by the running dev server).
+9. **Temur Roar art** — the deck is now kind `open` with price + picture, but
    nobody has eyeballed whether the art is the right DECK art (it may still
    be the old multi-deck set-pack image). Optional: check on the card, or run
    `npm run backfill-art` (covers `open` now) if wrong.
-9. Marketplace Insights access still pending eBay approval.
-10. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+10. Marketplace Insights access still pending eBay approval.
+11. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Have the user click "Fill release dates (N)" and browser-verify the
-   release-date feature (Problem 1; probe says expect 59/70) — commit only
-   when the user asks.
-2. Browser-verify the inventory visibility rules (Problem 3), the bundle
+1. Browser-verify the bundle preview fix (Problem 1) — commit only when the
+   user asks.
+2. Have the user click "Fill release dates (N)" and browser-verify the
+   release-date feature (Problem 2; probe says expect 59/70).
+3. Browser-verify the inventory visibility rules (Problem 4), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
-   (Problems 2–4).
-3. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
+   (Problems 3 + 5).
+4. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
    whether form quantity edits should reuse `adjust` semantics + movement
    ledger before coding).
-4. Optional: eyeball Temur Roar's art (Problem 8) — re-run backfill-art if
+5. Optional: eyeball Temur Roar's art (Problem 9) — re-run backfill-art if
    it's still the set-pack image.
-5. Stop dev → `npm run build` → confirm green → restart dev.
-6. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+6. Stop dev → `npm run build` → confirm green → restart dev.
+7. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget

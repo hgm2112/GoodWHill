@@ -294,10 +294,12 @@ Copy `.env.local.example` → `.env.local`. Keys:
   anchor-first / ≤50%-tier stats for dominant) and exits non-zero on a rule
   violation.
 - **Internal 10% bundle discount** (`BUNDLE_DISCOUNT_PCT`): the wire
-  `targetCents` is the bundle's SELLING PRICE; both bundle routes convert it
+  `targetCents` is the bundle's SELLING PRICE; the generate route converts it
   via `contentsTargetForPrice` (`price ÷ 0.9` — a $100 bundle packs ~$111 of
   value) before generating, and `target_value_cents` stores that contents-fill
-  target. The price shown anywhere is always `bundlePriceCents(total)` =
+  target (the create route does the same for its legacy no-`lines` path; with
+  `lines` it stores the preview's `targetValueCents`). The price shown
+  anywhere is always `bundlePriceCents(total)` =
   `round(total × 0.9)`, derived from the actual contents — so pre-existing
   bundles also display 10% off ("prices run a bit high"). Seller-facing only:
   builder preview, bundles list, detail header + contents card, CSV export —
@@ -305,8 +307,13 @@ Copy `.env.local.example` → `.env.local`. Keys:
   design) or anything else buyer-visible.
 - `POST /api/bundles/generate` returns a non-persisting preview (client shows
   it; calling again re-randomizes; response carries `priceCents` alongside the
-  fill `targetCents`). `POST /api/bundles` persists + reserves. Both accept
-  `dominant` (boolean, default true).
+  fill `targetCents`). `POST /api/bundles` persists + reserves, and accepts
+  `lines` (`{ itemId, quantity }[]`) + `targetValueCents` from the preview:
+  with `lines` the bundle is stored EXACTLY as previewed (no re-roll — lines
+  re-read from the DB for money, dup/stock/active rules re-checked, `409
+  STALE_PREVIEW` if inventory moved), so preview == created. Without `lines`
+  it falls back to generating a fresh bundle (legacy callers; `targetCents` ≥
+  $5 required there). Both routes accept `dominant` (boolean, default true).
 - `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
   and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
 
