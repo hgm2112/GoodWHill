@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { NumberDollars } from "@/components/ui/Modal";
-import { bundlePriceCents, bundleToCsv } from "@/lib/bundle";
+import { bundlePriceCents, bundleToCsv, generateListingText } from "@/lib/bundle";
 import { centsToUsd, downloadTextFile, formatDateTime, kindLabel, pluralize, truncated } from "@/lib/utils";
 import type { BundleStatus, BundleWithItems, Location } from "@/lib/types";
 
@@ -92,10 +92,15 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
       .then((data) => {
         if (Array.isArray(data)) {
           const mine = data.find(
-            (d: { bundle_id?: string | null; title?: string }) =>
+            (d: { bundle_id?: string | null; title?: string; description?: string | null }) =>
               d.bundle_id === initial.id && d.title,
           );
-          if (mine) setDraftTitle(mine.title);
+          if (mine) {
+            // Load the saved draft (collapsed) so the button reads
+            // "Edit listing draft" from the start — never regenerate here.
+            setDraftTitle(mine.title);
+            setDraft({ title: mine.title, description: mine.description ?? "" });
+          }
         }
       })
       .catch(() => {});
@@ -254,6 +259,26 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  function regenerateDraft() {
+    if (!draft) return;
+    if (
+      !window.confirm(
+        "Regenerate the draft text? This replaces the title and description above (nothing is saved until you click Save draft).",
+      )
+    )
+      return;
+    const fresh = generateListingText({
+      name: bundle.name,
+      lines: (bundle.items ?? []).map((bi) => ({
+        item: bi.item,
+        quantity: bi.quantity,
+        valueCents: bi.value_cents,
+      })),
+    });
+    setDraft(fresh);
+    flash("Regenerated — review it, then Save draft");
   }
 
   async function remove() {
@@ -497,6 +522,9 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
                 />
               </div>
               <div className="flex justify-end gap-2">
+                <button className="btn btn-ghost mr-auto" onClick={regenerateDraft} disabled={busy}>
+                  Regenerate
+                </button>
                 <button className="btn btn-ghost" onClick={() => setEditingDraft(false)}>
                   Close
                 </button>

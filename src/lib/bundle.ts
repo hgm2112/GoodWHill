@@ -439,6 +439,8 @@ export function defaultBundleName(targetCents: number, includesSealed: boolean):
  *
  * No prices and no generator attribution. Title is
  * "<name> Sealed Lot — <priciest item>" (≤ 80 chars, eBay's limit).
+ * Description lists the contents as `• N× Name` bullets, most expensive
+ * item first.
  */
 export function generateListingText(opts: {
   name: string;
@@ -454,10 +456,16 @@ export function generateListingText(opts: {
   const base = `${name.trim()} Sealed Lot`.trim();
   const title = truncated(priciest ? `${base} — ${priciest.item.name}` : base, 80);
 
-  const itemLines = lines
+  // Bullets, most expensive item first (unit value; line total breaks ties).
+  const sorted = [...lines].sort(
+    (a, b) =>
+      b.valueCents - a.valueCents ||
+      b.valueCents * b.quantity - a.valueCents * a.quantity,
+  );
+  const itemLines = sorted
     .map(
-      (l, i) =>
-        `${i + 1}. ${l.quantity}× ${l.item.name}${l.item.set_code ? ` (${l.item.set_code})` : ""}`,
+      (l) =>
+        `• ${l.quantity}× ${l.item.name}${l.item.set_code ? ` (${l.item.set_code})` : ""}`,
     )
     .join("\n");
 
