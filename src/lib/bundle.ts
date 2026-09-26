@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Item } from "@/lib/types";
 import { pluralize, truncated } from "@/lib/utils";
 
@@ -490,4 +491,27 @@ export function bundleToCsv(lines: BundleLine[], totalCents: number): string {
   return rows
     .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
     .join("\n");
+}
+
+/**
+ * Display names for bundles: `bundles.ebay_listing_id` → the linked eBay
+ * listing's title, so lists show the real listing name instead of the
+ * generated bundle name. Unlinked bundles (or ids with no stored listing)
+ * simply won't be in the map — callers fall back to `bundle.name`.
+ * Server-only usage; the SupabaseClient import is type-only so client
+ * components importing this module stay unaffected.
+ */
+export async function ebayTitlesForBundles(
+  supabase: SupabaseClient,
+  ownerId: string,
+  ebayListingIds: Array<string | null | undefined>,
+): Promise<Map<string, string>> {
+  const ids = [...new Set(ebayListingIds.filter((id): id is string => Boolean(id)))];
+  if (!ids.length) return new Map();
+  const { data } = await supabase
+    .from("listings")
+    .select("ebay_listing_id, title")
+    .eq("owner_id", ownerId)
+    .in("ebay_listing_id", ids);
+  return new Map((data ?? []).map((l) => [l.ebay_listing_id, l.title]));
 }

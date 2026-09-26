@@ -18,7 +18,7 @@ export function SalesClient({
 }: {
   initial: SaleRow[];
   items: Item[];
-  bundles: Bundle[];
+  bundles: Array<Bundle & { display_name?: string }>;
 }) {
   const router = useRouter();
   const sales = initial;
@@ -245,7 +245,7 @@ export function SalesClient({
                   .filter((b) => b.status !== "sold" && b.status !== "cancelled")
                   .map((b) => (
                     <option key={b.id} value={b.id}>
-                      {truncated(b.name, 40)} ({b.status})
+                      {truncated(b.display_name ?? b.name, 40)} ({b.status})
                     </option>
                   ))}
               </select>

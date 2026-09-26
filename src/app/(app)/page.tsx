@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { ebayTitlesForBundles } from "@/lib/bundle";
 import { centsToUsd, formatDateTime, truncated } from "@/lib/utils";
 import { fetchUpcomingReleases, type UpcomingRelease } from "@/lib/releases";
 
@@ -23,11 +24,23 @@ async function loadDashboard() {
       .limit(8),
   ]);
 
+  // Reserved list shows linked eBay listing titles when a bundle is linked.
+  const titles = await ebayTitlesForBundles(
+    supabase,
+    user.id,
+    (bundles.data ?? [])
+      .filter((b: { status: string }) => b.status === "allocated")
+      .map((b: { ebay_listing_id: string | null }) => b.ebay_listing_id),
+  );
+
   return {
     user,
     items: items.data ?? [],
     itemsError: items.error?.message ?? null,
-    bundles: bundles.data ?? [],
+    bundles: (bundles.data ?? []).map((b) => ({
+      ...b,
+      display_name: titles.get(b.ebay_listing_id ?? "") ?? b.name,
+    })),
     listings: listings.data ?? [],
     sales: sales.data ?? [],
   };
@@ -137,7 +150,7 @@ export default async function DashboardPage() {
                   .map((b) => (
                     <li key={b.id} className="flex items-center justify-between py-1.5">
                       <Link href={`/bundles/${b.id}`} className="truncate text-sm text-indigo-600 hover:underline">
-                        {truncated(b.name, 40)}
+                        {truncated(b.display_name, 40)}
                       </Link>
                       <span className="text-xs text-slate-400">created {formatDateTime(b.created_at).split(" ")[0]}</span>
                     </li>

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BundleDetailClient } from "@/components/BundleDetailClient";
-import { bundlePriceCents } from "@/lib/bundle";
+import { bundlePriceCents, ebayTitlesForBundles } from "@/lib/bundle";
 import { centsToUsd, truncated } from "@/lib/utils";
 
 export const metadata = { title: "Bundle · goodwhilly" };
@@ -36,10 +36,13 @@ export default async function BundleDetailPage({ params }: { params: Promise<{ i
     0,
   );
 
+  const titles = await ebayTitlesForBundles(supabase, user.id, [data.ebay_listing_id]);
+  const displayName = titles.get(data.ebay_listing_id ?? "") ?? data.name;
+
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-bold">{truncated(data.name, 60)}</h1>
+        <h1 className="text-lg font-bold">{truncated(displayName, 60)}</h1>
         <span className="text-sm text-slate-400">
           <span className="font-semibold text-emerald-700">{centsToUsd(bundlePriceCents(data.total_value_cents))}</span> price · {centsToUsd(data.total_value_cents)} value · {count} items
         </span>

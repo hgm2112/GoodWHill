@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { BundleBuilder } from "@/components/BundleBuilder";
-import { bundlePriceCents } from "@/lib/bundle";
+import { bundlePriceCents, ebayTitlesForBundles } from "@/lib/bundle";
 import { centsToUsd, truncated } from "@/lib/utils";
 
 export const metadata = { title: "Bundles · goodwhilly" };
@@ -20,10 +20,17 @@ export default async function BundlesPage() {
     .eq("owner_id", user.id)
     .order("created_at", { ascending: false });
 
+  const titles = await ebayTitlesForBundles(
+    supabase,
+    user.id,
+    (bundles ?? []).map((b: { ebay_listing_id: string | null }) => b.ebay_listing_id),
+  );
+
   const wrapped = (bundles ?? []).map(
     (b: {
       id: string;
       name: string;
+      ebay_listing_id: string | null;
       target_value_cents: number;
       total_value_cents: number;
       status: string;
@@ -33,14 +40,13 @@ export default async function BundlesPage() {
       bundle_items?: Array<{ quantity: number }>;
     }) => ({
       id: b.id,
-      name: b.name,
+      name: titles.get(b.ebay_listing_id ?? "") ?? b.name,
       target_value_cents: b.target_value_cents,
       total_value_cents: b.total_value_cents,
       status: b.status,
       listing_price_cents: b.listing_price_cents,
       shipping_cents: b.shipping_cents,
       listingLabel: [
-        ...(b.listing_price_cents != null ? ["listed"] : []),
         ...(b.shipping_cents != null ? [`ship ${centsToUsd(b.shipping_cents)}`] : []),
       ].join(" · "),
       created_at: b.created_at,
@@ -50,14 +56,6 @@ export default async function BundlesPage() {
       ),
     }),
   );
-
-  const statusDot: Record<string, string> = {
-    allocated: "bg-amber-400",
-    listed: "bg-indigo-500",
-    sold: "bg-emerald-500",
-    cancelled: "bg-slate-300",
-    draft: "bg-slate-400",
-  };
 
   return (
     <div className="grid items-start gap-4 lg:grid-cols-5">
@@ -77,11 +75,11 @@ export default async function BundlesPage() {
                   className="card flex items-center justify-between gap-3 transition hover:border-indigo-300"
                 >
                   <span className="flex items-center gap-2.5">
-                    <span className={`h-2.5 w-2.5 rounded-full ${statusDot[b.status]}`} />
                     <span>
-                      <span className="block truncate text-sm font-semibold">{truncated(b.name, 48)}</span>
+                      <span className="block truncate text-sm font-semibold">{truncated(b.name, 60)}</span>
                       <span className="block text-xs text-slate-400">
-                        {b.item_count} items · created {b.created_at.slice(0, 10)}
+                        {b.item_count} items · created {b.created_at.slice(0, 10)} ·{" "}
+                        <span className="font-medium text-slate-500">{b.status}</span>
                       </span>
                     </span>
                   </span>
