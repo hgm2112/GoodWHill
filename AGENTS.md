@@ -80,6 +80,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     `0011_bundle_listing_fields.sql` adds `bundles.listing_price_cents` +
     `bundles.shipping_cents` (nullable); apply it before the mark-listed
     panel (PATCH writes these columns).
+    `0012_listings_shipping.sql` adds `listings.shipping_cents` (nullable
+    int, parsed from GetMyeBaySelling); apply it before the bundle
+    detail's "Fill from eBay" button — the fill route 404s without it.
   - Tables: `profiles`, `upc_catalog` (shared, any user may read/contribute),
     `items` (owner-scoped inventory incl. `item_kind` enum, `quantity`,
     `value_cents`, `acquired_at` date (editable in the item form; scan-created
@@ -92,7 +95,9 @@ Copy `.env.local.example` → `.env.local`. Keys:
     `shipping_cents` "Shipping Fee", captured by the mark-listed panel and
     editable after; prefills Gross/Shipping in the sale form)/`bundle_items`,
     `allocations` (reserved stock), `listing_drafts`, `sales`, `listings`
-    (synced eBay listings), `locations` (named storage boxes; `items` and
+    (synced eBay listings; `shipping_cents` parsed from the Trading-API
+    `ShippingServiceCost`, 12/13 items carried it), `locations` (named storage
+    boxes; `items` and
     `profiles` reference one via `location_id`/`default_location_id`, FK
     `ON DELETE SET NULL`), `ebay_tokens` (service-role ONLY — no RLS policy
     for app roles).
@@ -242,12 +247,16 @@ Copy `.env.local.example` → `.env.local`. Keys:
   Inventory API returns nothing and the Listings API scope (`sell.listings`) is
   not granted. The OAuth token rides in `<RequesterCredentials><eBayAuthToken>`
   and the App/Dev/Cert ID headers come from `EBAY_CLIENT_ID`/`EBAY_DEV_ID`/
-  `EBAY_CLIENT_SECRET`. Results are paged and upserted into `listings`.
+  `EBAY_CLIENT_SECRET`. Results are paged and upserted into `listings`
+  (`parseTradingItem` also extracts the first `ShippingServiceCost` into
+  `listings.shipping_cents` — probe `scripts/probe-trading-shipping.ts`
+  confirmed ActiveList carries it on 12/13 items).
   Triggered manually by users and via the daily `POST /api/cron/sync-ebay`
   (guarded by `CRON_SECRET`; `maxDuration: 120`).
 - Match eBay listings to local items on `ebay_item_id`/`item_id` where
   possible — currently the `items`/`listings` linkage is best-effort (listings
-  are displayed read-only).
+  are displayed read-only). Bundles link deliberately via
+  `bundles.ebay_listing_id` (the bundle detail's "eBay listing" card).
 - eBay dev app prerequisites live outside the repo: register at
   developer.ebay.com for Client ID/Secret, production access, and a RuName.
   The app handles their absence gracefully.
@@ -330,6 +339,20 @@ Copy `.env.local.example` → `.env.local`. Keys:
   info line + bundles list (the actual price replaces the derived price,
   `ship $Y` appended when set). The sale form prefills Gross/Shipping from
   these when that bundle is picked (still editable). CSV/drafts untouched.
+  The info line also shows for `listed`/`sold` bundles even when both values
+  are null (dashes + Edit), so the inputs are always reachable once listed.
+- **Auto-fill from eBay** (`POST /api/bundles/[id]/ebay-fill`): the "eBay
+  listing" card on the bundle detail links a synced `listings` row
+  (`bundles.ebay_listing_id`) and fills Actual Listing Price + Shipping Fee
+  from it — it runs `syncEbaysListings` first (best-effort; falls back to the
+  last-synced row with `_synced: false` on eBay errors), 409s when the
+  linked listing isn't active or has no price, and overwrites
+  `shipping_cents` only when the listing carries one (null = keep stored).
+  Status is never changed. When unlinked, the dropdown preselects the
+  `(suggested)` listing matched from the bundle's listing-draft title
+  (shared ≥ 2 meaningful words and ≥ 30% overlap, generic lot words
+  dropped) — auto-suggest + confirm, never auto-applied. `PATCH
+  /api/bundles/[id]` accepts `ebayListingId: null` to unlink (prices kept).
 - `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
   and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
 

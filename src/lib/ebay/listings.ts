@@ -37,6 +37,7 @@ interface TradingItem {
   itemId: string;
   title: string;
   priceCents: number | null;
+  shippingCents: number | null;
   currency: string;
   quantityAvailable: number | null;
   quantitySold: number | null;
@@ -62,10 +63,15 @@ function parseTradingItem(xml: string): TradingItem | null {
   const listingStatus = grab(xml, "ListingStatus") ?? "ACTIVE";
   const gallery = grab(xml, "GalleryURL");
 
+  // First ShippingServiceCost under ShippingDetails = the dominant service's
+  // flat rate (absent for some free-shipping/calculated listings → null).
+  const shippingCost = grab(xml, "ShippingServiceCost");
+
   return {
     itemId,
     title: title ? xmlUnescape(title) : "",
     priceCents: priceMatch ? extractPriceCents(priceMatch[2]) : null,
+    shippingCents: shippingCost != null ? extractPriceCents(shippingCost) : null,
     currency,
     quantityAvailable: Number(grab(xml, "QuantityAvailable") ?? grab(xml, "Quantity") ?? NaN) || null,
     quantitySold: Number(grab(xml, "QuantitySold") ?? NaN) || null,
@@ -152,6 +158,7 @@ export async function syncEbaysListings(ownerId: string): Promise<SyncStats> {
         ebay_listing_id: item.itemId,
         title: item.title || `eBay listing ${item.itemId}`,
         price_cents: item.priceCents,
+        shipping_cents: item.shippingCents,
         currency: item.currency,
         status: item.listingStatus || "ACTIVE",
         quantity_available: item.quantityAvailable,

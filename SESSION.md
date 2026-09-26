@@ -1,34 +1,61 @@
 # SESSION.md — handoff for the next agent
 
-Last session: 2026-09-25 (new day; prior 5 sessions were 2026-09-24). Repo: goodwhilly (Next.js 15 + Supabase inventory app
+Last session: 2026-09-26 (new day; prior sessions 2026-09-25 and 2026-09-24).
+Repo: goodwhilly (Next.js 15 + Supabase inventory app
 for an MTG/eBay reseller). Read `AGENTS.md` first for full operating context;
 this file records where the previous session left off.
 
 ## Current Objective
 
-**Actual Listing Price + Shipping Fee on bundles** (code complete,
-typecheck/lint green, **NOT yet committed**, **migration `0011` NOT yet
-applied**): user request — "let me adjust the actual listing price when i
-mark it as listed and have a shipping field in there too". Two nullable
-int columns on `bundles` (`0011_bundle_listing_fields.sql`: add
-`listing_price_cents` + `shipping_cents`, idempotent — **user must apply in
-the SQL editor before browser-testing**, the PATCH writes them). UI: "Mark
-listed" on the bundle detail page now opens a panel with `NumberDollars`
-inputs labeled exactly **"Actual Listing Price"** (prefilled with the
-suggested `bundlePriceCents(total)`) and **"Shipping Fee"** (blank);
-confirm PATCHes status + values (`listingPriceCents`/`shippingCents`, null
-clears, integer ≥ 0 else 400). Once set, an info line shows both with an
-**Edit** button (re-saves without status change). Display: detail info line
-replaces derived price logic only in the list (bundles list bold = actual
-price when set, `listed · ship $Y · $X value` label); sale form prefills
-Gross/Shipping when that bundle is picked (non-null values only, still
-editable). CSV/drafts untouched.
+**eBay auto-fill for Actual Listing Price + Shipping Fee** (code complete,
+typecheck/lint green, **NOT yet committed**, **migration `0012` NOT yet
+applied**): user request — pull those two fields from their own synced eBay
+listings instead of typing them. Decisions (user-confirmed):
 
-**Bundle preview == created bundle** (committed `4f376b5`, pushed with docs
-`e533545`): create no longer re-rolls — builder sends the previewed `lines`
-+ `targetValueCents`; route persists them (money from the DB, `409
-STALE_PREVIEW` guard). NOT yet browser-confirmed by the user (they committed
-it themselves).
+- Matching = **auto-suggest + confirm**: the unlinked dropdown preselects the
+  `(suggested)` listing scored from the bundle's listing-draft title (shared
+  ≥ 2 meaningful words AND ≥ 30% of the draft's tokens; generic lot words
+  like lot/sealed/mtg/misc/x dropped). Never auto-applied — user confirms.
+- Fill = **sync first, then fill**: `syncEbaysListings` runs on every fill;
+  if eBay errors it falls back to the last-synced row and the response says
+  `_synced: false` (toast notes it).
+
+Shipped this session (uncommitted):
+
+1. **`listings.shipping_cents`** (`supabase/migrations/0012_listings_shipping.sql`,
+   idempotent, **NOT applied yet — user runs it in the SQL editor**):
+   `parseTradingItem` now extracts the first `ShippingServiceCost` from the
+   GetMyeBaySelling ActiveList XML into the sync payload. Probe
+   `scripts/probe-trading-shipping.ts` (read-only, reads `.env.local`, AES-GCM
+   token decrypt + refresh-grant fallback) confirmed **branch A: 12/13 items
+   carry it** (sample $5.99) → no per-item GetItem needed. **Until 0012 is
+   applied EVERY sync write fails** (the payload always includes the key →
+   PGRST204) — apply before clicking "Sync now" or testing the fill.
+2. **`POST /api/bundles/[id]/ebay-fill`** (`src/app/api/bundles/[id]/ebay-fill/`):
+   body `{ ebayListingId? }` (omitted = refresh the current link) → syncs
+   (best-effort try/catch) → reads the linked `listings` row (409
+   `LISTING_NOT_FOUND` if absent/not active, 409 `NO_PRICE` if unpriced) →
+   writes `listing_price_cents = price_cents` and `shipping_cents` only when
+   the listing carries one (null = keep stored — manual edits win) → returns
+   the updated bundle + `_synced` + listing title/URI. **Status never
+   changes.** Route smoke-tested via dev server: 401 JSON as expected.
+3. **"eBay listing" card** (`BundleDetailClient.tsx`): loads `/api/listings`
+   (client-filters `status === "ACTIVE"`) + `/api/drafts` (this bundle's
+   title for the suggestion). Unlinked = select preselected with
+   `(suggested)` + hint line + **Link & fill price & shipping** (disabled
+   with no selection). Linked = price + shipping + synced-time line + "open
+   on eBay" link, **Refresh from eBay** (re-fill, triggers sync), **Unlink**.
+   `PATCH /api/bundles/[id]` accepts `ebayListingId: null` to unlink
+   (prices kept; empty string also clears).
+4. **Diagnosed + fixed a UI gap**: the Actual Listing Price info line only
+   rendered when a value was set, so a `listed`/`sold` bundle with null
+   values had no Edit affordance. It now renders (dashes + Edit) whenever a
+   value is set **or** status is listed/sold.
+
+Already pushed this session: **Actual Listing Price / Shipping Fee manual
+fields** (commit `e7aa06d` — panel on mark-listed, Edit button, list display,
+sale-form prefill; migration `0011` **applied**, REST-verified) and the
+**bundle preview == created** fix (`4f376b5` + docs `e533545`).
 
 **Product release date** (committed `524e903`, pushed; probe-verified
 **59/70 resolvable**, **dates NOT yet filled in the DB**): `items.release_date` — when the
@@ -76,18 +103,25 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## What We Did (this session)
 
-1. **Actual Listing Price + Shipping Fee** (Current Objective — uncommitted;
-   file list in its own section below): migration `0011` (NOT yet applied),
-   PATCH accepts `listingPriceCents`/`shippingCents`, mark-listed panel +
-   Edit affordance, bundles-list display, sale-form prefill.
-2. **Bundle preview == created bundle** (committed `4f376b5` + docs
+1. **eBay auto-fill for Actual Listing Price / Shipping Fee** (Current
+   Objective — uncommitted; file list in its own section below): shipping
+   parse in the listings sync (probe-verified branch A), migration `0012`
+   (NOT yet applied), `POST /api/bundles/[id]/ebay-fill`, the bundle-detail
+   "eBay listing" card with draft-title suggestion, PATCH unlink
+   (`ebayListingId: null`), info-line listed/sold gap fix.
+2. **Actual Listing Price + Shipping Fee** (committed `e7aa06d`, pushed):
+   migration `0011` **applied by the user** (REST-verified: both columns
+   return, null on the 2 listed bundles), PATCH accepts `listingPriceCents`/
+   `shippingCents`, mark-listed panel + Edit affordance, bundles-list
+   display, sale-form prefill.
+3. **Bundle preview == created bundle** (committed `4f376b5` + docs
    `e533545`, pushed): user bug — create re-rolled a fresh random bundle
    because `BundleBuilder.create()` sent no lines and `POST /api/bundles`
    re-ran `buildBundleAcrossGames` (seeds from `Math.random()` per call).
    Fix: builder sends previewed `lines` + `targetValueCents`; route persists
    them exactly (money re-read from the DB, dup/stock/active re-checked,
    `409 STALE_PREVIEW` when inventory moved; no `lines` → legacy generate).
-3. **Product release date feature** (committed `524e903`, pushed;
+4. **Product release date feature** (committed `524e903`, pushed;
    file list in its own section below): schema `0010`, item form field
    (`ItemForm` "Released" input + `CardSearchInput`/scryfall search surfacing
    `released_at` prefill), POST/PATCH inventory validate `YYYY-MM-DD`,
@@ -102,7 +136,7 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
    extracted the resolver to `src/lib/release-dates.ts`, and added the
    `--inventory` probe. eBay aspect path dropped after live probing (see
    Current Objective).
-4. **Inventory visibility: paused always shown, sold-out hidden** (committed
+5. **Inventory visibility: paused always shown, sold-out hidden** (committed
    `26e3c0c` + SESSION refresh `4b92db4`, pushed — see Files Changed below).
 
 ## What We Did (2026-09-24 sessions)
@@ -225,18 +259,22 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## Current State
 
-- `origin/main` = `e533545` (preview fix `4f376b5` + docs, pushed).
-  Working tree **dirty**: the Actual Listing Price / Shipping Fee feature is
-  fully coded but **uncommitted** (awaiting user's commit request).
-- `typecheck` + `lint` pass (re-run after the listing-price feature landed).
-  **`npm run build` not run** — dev server is running in the user's
-  foreground terminal; building would clobber `.next/` and 500 every dynamic
-  route.
-- **Migration `0011` NOT applied yet** (`0011_bundle_listing_fields.sql` —
-  `bundles.listing_price_cents` + `shipping_cents`); the user applies it in
-  the SQL editor BEFORE browser-testing (the mark-listed PATCH writes these
-  columns → PGRST204 error until then).
-- **Migration `0010` IS applied** (verified via REST this session: the
+- `origin/main` = `e7aa06d` (Actual Listing Price / Shipping Fee, pushed;
+  before that `4f376b5` preview fix + `e533545` docs). Working tree
+  **dirty**: the eBay auto-fill feature is fully coded but **uncommitted**
+  (awaiting user's commit request) — see Files Changed below.
+- `typecheck` + `lint` pass (re-run after the auto-fill feature landed;
+  also fixed 3 errors in `scripts/probe-trading-shipping.ts`).
+  **`npm run build` not run** — the dev server IS running (pgrep confirmed);
+  building would clobber `.next/` and 500 every dynamic route. Route
+  smoke-tested through it: `POST /api/bundles/[id]/ebay-fill` → 401 JSON.
+- **Migration `0012` NOT applied yet** (`0012_listings_shipping.sql` —
+  `listings.shipping_cents`; REST-verified NOT applied, 42703). **The user
+  must apply it BEFORE any sync/fill test** — the sync payload now always
+  includes `shipping_cents`, so every sync write 500s until the column
+  exists (manual "Sync now", the daily cron, and the fill route's sync).
+- **Migration `0011` IS applied** (REST-verified: both `bundles` columns
+  return; both bundles currently null). **Migration `0010` IS applied** (verified via REST this session: the
   column returns, all rows null). **Dates are NOT filled yet** — the user
   clicks "Fill release dates (N)" once the feature is browser-ready; expect
   59/70 to fill in one or two clicks (cap 50 per call), 11 stay manual.
@@ -250,8 +288,10 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
 - **Migration `0009` applied** (SQL editor by the user, 2026-09-24). The
   price-history feature has not been browser-verified yet.
-- **Actual Listing Price / Shipping Fee NOT browser-checked yet** (and
-  migration `0011` unapplied — see above). **Bundle preview==create NOT
+- **eBay auto-fill NOT browser-checked yet** (and migration `0012`
+  unapplied — see above). **Actual Listing Price / Shipping Fee manual flow
+  NOT browser-checked yet** (migration applied, committed `e7aa06d`).
+  **Bundle preview==create NOT
   browser-confirmed yet** (generate → create → Bundles detail must show the
   identical lines/value/price). Bundle discount
   + duplicates + dominant toggle NOT browser-checked yet. No
@@ -264,6 +304,15 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   $6.00/$6.24, etc.) — the old "value null, Browse will retry" note is dead.
 
 ## Decisions Made
+
+- **eBay fill matching (2026-09-26, user-confirmed)**: auto-suggest +
+  confirm (dropdown preselected from the listing-draft title, never
+  auto-applied) over fuzzy auto-match; sync-first with fallback to the
+  last-synced row (`_synced: false`) over failing hard when eBay is down.
+  Shipping unknown on a listing (null) = keep the stored value (manual
+  entries win); present (incl. 0) = overwrite. Status is never touched by
+  the fill. `listings.shipping_cents` parsed during sync (branch A,
+  probe-verified 12/13) rather than a per-item GetItem call.
 
 - **Release-date sources (2026-09-25)**: eBay is NOT one — live probing
   proved Browse summaries return no `localizedAspects` (0/10, with/without
@@ -296,11 +345,37 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
 
-## Files Changed (this session, UNCOMMITTED = Actual Listing Price / Shipping Fee)
+## Files Changed (this session, UNCOMMITTED = eBay auto-fill)
+
+- `supabase/migrations/0012_listings_shipping.sql` (new) — nullable
+  `listings.shipping_cents int`, idempotent. **NOT applied yet** (user runs
+  it in the SQL editor first; syncs fail until then).
+- `scripts/probe-trading-shipping.ts` (new) — read-only probe: decrypts the
+  stored eBay token (AES-GCM `enc:` + refresh-grant fallback), calls
+  GetMyeBaySelling, greps ActiveList XML for shipping tags → confirmed
+  branch A (12/13 items carry `ShippingServiceCost`).
+- `src/lib/ebay/listings.ts` — `TradingItem.shippingCents`; `parseTradingItem`
+  extracts the first `ShippingServiceCost` via `extractPriceCents`; sync
+  `payload` includes `shipping_cents`.
+- `src/app/api/bundles/[id]/ebay-fill/route.ts` (new) — POST: sync
+  (best-effort) → linked listing lookup (409s) → writes
+  `listing_price_cents`/`shipping_cents` (shipping only when the listing
+  carries one); returns bundle + `_synced` + title/URI; never touches status.
+- `src/app/api/bundles/[id]/route.ts` — PATCH now accepts `ebayListingId:
+  null`/`""` to unlink (`"ebayListingId" in body` check instead of truthy).
+- `src/components/BundleDetailClient.tsx` — "eBay listing" card (loads
+  `/api/listings` ACTIVE + `/api/drafts`; `suggestListing` draft-title
+  scorer; select preselected with `(suggested)`; Link & fill / Refresh /
+  Unlink / open-on-eBay), `fillFromEbay`/`unlinkListing` handlers, info-line
+  `showPriceLine` gap fix (listed/sold with nulls now show dashes + Edit).
+- `AGENTS.md` — migration `0012` note, `listings` table shipping note,
+  auto-fill bullet, sync parse note. `SESSION.md` — this file.
+
+## Files Changed (committed `e7aa06d` = Actual Listing Price / Shipping Fee)
 
 - `supabase/migrations/0011_bundle_listing_fields.sql` (new) — nullable
   `bundles.listing_price_cents` + `bundles.shipping_cents`, idempotent.
-  **NOT applied yet** (user runs it in the SQL editor first).
+  **Applied by the user** (REST-verified 2026-09-26).
 - `src/lib/types.ts` — `Bundle.listing_price_cents` / `shipping_cents`.
 - `src/app/api/bundles/[id]/route.ts` — PATCH accepts `listingPriceCents`/
   `shippingCents` (null clears; integer ≥ 0 cents else 400), applied to the
@@ -474,79 +549,91 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Problems / Blockers
 
-1. **Actual Listing Price / Shipping Fee not applied/browser-verified yet**
-   — migration `0011` is NOT applied (user runs it in the SQL editor first;
-   until then the mark-listed PATCH 500s on the missing column). Then:
-   bundle detail → "Mark listed" → panel with **Actual Listing Price**
-   prefilled at the suggested price + blank **Shipping Fee** → confirm →
-   info line shows both, bundles list bold = actual price with `listed ·
-   ship $Y · $X value`, **Edit** re-saves without status change, sale form
-   prefills Gross/Shipping when the bundle is picked. Uncommitted.
-2. **Bundle preview==create not browser-confirmed yet** — committed
+1. **eBay auto-fill not applied/browser-verified yet** — migration `0012`
+   is NOT applied (42703 REST-verified; **until then EVERY listings sync
+   write fails** because the payload always carries `shipping_cents`). Order:
+   apply `0012_listings_shipping.sql` → reload the bundle detail → the
+   "eBay listing" card should preselect the `(suggested)` listing (MTG
+   bundle → "…Lorwyn Eclipsed: Bundle and Misc Boosters" $105; MTG2 →
+   "…Secret Lair, Deck, and 4x Boosters" $125) → **Link & fill price &
+   shipping** → info line shows the filled price + shipping, status still
+   `listed` → **Refresh from eBay** re-syncs; **Unlink** keeps the prices.
+   Sale form should prefill Gross/Shipping from the filled bundle.
+2. **Actual Listing Price / Shipping Fee manual flow not browser-verified**
+   — committed `e7aa06d`, migration `0011` applied: bundle detail →
+   "Mark listed" → panel with **Actual Listing Price** prefilled at the
+   suggested price + blank **Shipping Fee** → confirm → info line shows
+   both (also for listed/sold bundles with nulls after the gap fix), bundles
+   list bold = actual price with `listed · ship $Y · $X value`, **Edit**
+   re-saves without status change, sale form prefills Gross/Shipping.
+3. **Bundle preview==create not browser-confirmed yet** — committed
    `4f376b5` (pushed with docs `e533545`); typecheck/lint green. Generate a
    bundle → Create → open it on the Bundles tab: the lines/value/price must
    be identical to the preview; "Regenerate" must still re-randomize; a stale
    preview (item paused/sold out since) should show the inline "Inventory
    changed since this preview — regenerate the bundle." error.
-3. **Release date not filled/browser-verified yet** — migration `0010` is
+4. **Release date not filled/browser-verified yet** — migration `0010` is
    applied (REST-verified) and the probe resolves **59/70**, but no dates
    are written to the DB yet: have the user click "Fill release dates (N)"
    (2 clicks: cap 50), then check the card "Released" lines, scan displays,
    and the form field. 11 rows stay manual by design: Pokémon×3, Topps×3,
    Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna Food
    Token, Command Tower, Inked Foil Edition).
-4. **Bundle discount + duplicates + dominant toggle not browser-exercised
+5. **Bundle discount + duplicates + dominant toggle not browser-exercised
    yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
    create → detail/list show price · value; CSV has both rows; an old bundle
    shows price = value × 0.9. Duplicates: probe-verified (56–71% dup rate, 0
    violations); eyeball one real generate for `×N` lines on multi-copy
    under-$20 stock. Dominant: default-checked bundle leads with the priciest
    line; unchecking the box gives the old mix.
-5. **Inventory visibility not browser-verified** — paused rows always shown
+6. **Inventory visibility not browser-verified** — paused rows always shown
    (red ring + "PAUSED · hidden from store" overlay, no more Show-paused
    toggle); sold-out rows hidden unless "Show out of stock (N)" is checked
    (revealed rows keep the red `×0`); sale dropdown no longer lists 0-stock
    items.
-6. **Price history not browser-verified** (migration is in; check
+7. **Price history not browser-verified** (migration is in; check
    sparkline/modal after a refresh or manual value edit).
-7. **Dashboard releases not visually checked in a browser** — code + probe
+8. **Dashboard releases not visually checked in a browser** — code + probe
    verified; ask the user to load the dashboard.
-8. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
+9. **Latent bug, still NOT fixed:** `PATCH /api/inventory/[id]` ignores
    `quantity` — the edit form sends it but the route never puts it in `next`,
    so quantity edits silently don't persist. (`src/app/api/inventory/[id]/route.ts`.)
    (`acquired_at` now IS handled there; quantity still isn't.)
-9. **`npm run build` not run this session** (blocked by the running dev server).
-10. **Temur Roar art** — the deck is now kind `open` with price + picture, but
-   nobody has eyeballed whether the art is the right DECK art (it may still
-   be the old multi-deck set-pack image). Optional: check on the card, or run
-   `npm run backfill-art` (covers `open` now) if wrong.
-11. Marketplace Insights access still pending eBay approval.
-12. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
+10. **`npm run build` not run this session** (blocked by the running dev server).
+11. **Temur Roar art** — the deck is now kind `open` with price + picture, but
+    nobody has eyeballed whether the art is the right DECK art (it may still
+    be the old multi-deck set-pack image). Optional: check on the card, or run
+    `npm run backfill-art` (covers `open` now) if wrong.
+12. Marketplace Insights access still pending eBay approval.
+13. `EBAY_DEV_ID` still not set in Vercel (Trading-API listing sync).
 
 ## Next Steps (priority order)
 
-1. Apply migration `0011` (user, SQL editor), browser-verify the Actual
-   Listing Price flow (Problem 1) — commit only when the user asks.
-2. Browser-verify the bundle preview fix (Problem 2).
-3. Have the user click "Fill release dates (N)" and browser-verify the
-   release-date feature (Problem 3; probe says expect 59/70).
-4. Browser-verify the inventory visibility rules (Problem 5), the bundle
+1. Apply migration `0012` (user, SQL editor — **before any sync/fill test**),
+   then browser-verify the eBay auto-fill flow (Problem 1) — commit only when
+   the user asks.
+2. Browser-verify the Actual Listing Price manual flow (Problem 2; migration
+   `0011` already applied).
+3. Browser-verify the bundle preview fix (Problem 3).
+4. Have the user click "Fill release dates (N)" and browser-verify the
+   release-date feature (Problem 4; probe says expect 59/70).
+5. Browser-verify the inventory visibility rules (Problem 6), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
-   (Problems 4 + 6).
-5. Fix the `quantity` PATCH gap (route `[id]` ignores `quantity`; decide
-   whether form quantity edits should reuse `adjust` semantics + movement
-   ledger before coding).
-6. Optional: eyeball Temur Roar's art (Problem 10) — re-run backfill-art if
+   (Problems 5 + 7).
+6. Fix the `quantity` PATCH gap (Problem 9; route `[id]` ignores `quantity` —
+   decide whether form quantity edits should reuse `adjust` semantics +
+   movement ledger before coding).
+7. Optional: eyeball Temur Roar's art (Problem 11) — re-run backfill-art if
    it's still the set-pack image.
-7. Stop dev → `npm run build` → confirm green → restart dev.
-8. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
+8. Stop dev → `npm run build` → confirm green → restart dev.
+9. Before deploy: Vercel env (incl. `CRON_SECRET`, `EBAY_*`), optional
    `vercel.json` cron for `/api/cron/sync-ebay`.
 
 ## Do Not Forget
 
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
-- Don't rewrite migrations `0001`–`0011`; add the next `0012_*.sql` (keep idempotent).
+- Don't rewrite migrations `0001`–`0012`; add the next `0013_*.sql` (keep idempotent).
 - Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
   `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
 - Split card names on **last `:`** for the bold sub-name display.

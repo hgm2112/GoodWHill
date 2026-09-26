@@ -15,6 +15,47 @@ const STATUS_STYLES: Record<BundleStatus, string> = {
   cancelled: "rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-semibold text-red-600",
 };
 
+interface EbayListingLite {
+  ebay_listing_id: string;
+  title: string;
+  price_cents: number | null;
+  shipping_cents?: number | null;
+  status: string;
+  item_uri?: string | null;
+  last_synced_at?: string | null;
+}
+
+// Generic listing words that don't distinguish one lot from another.
+const SUGGEST_STOP = new Set([
+  "the", "and", "a", "an", "of", "for", "with", "or", "to", "in", "on", "at", "by", "from",
+  "lot", "sealed", "magic", "gathering", "misc", "mtg", "x", "4x", "new", "official",
+]);
+
+function titleTokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .filter((t) => t.length >= 2 && !SUGGEST_STOP.has(t));
+}
+
+/** Best ACTIVE listing for a draft title: ≥2 shared meaningful words and
+ * ≥30% of the draft's words present. Returns null when nothing fits. */
+function suggestListing(draftTitle: string, listings: EbayListingLite[]): string | null {
+  const draftTokens = titleTokens(draftTitle);
+  if (draftTokens.length < 2) return null;
+  let best: { id: string; score: number } | null = null;
+  for (const l of listings) {
+    const listingTokens = new Set(titleTokens(l.title));
+    const shared = draftTokens.filter((t) => listingTokens.has(t)).length;
+    const score = shared / draftTokens.length;
+    if (shared >= 2 && score >= 0.3 && (!best || score > best.score)) {
+      best = { id: l.ebay_listing_id, score };
+    }
+  }
+  return best?.id ?? null;
+}
+
 export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
   const router = useRouter();
   const [bundle, setBundle] = useState(initial);
@@ -27,6 +68,9 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
   const [listingPanel, setListingPanel] = useState<null | "list" | "edit">(null);
   const [listingPrice, setListingPrice] = useState<number | null>(null);
   const [listingShipping, setListingShipping] = useState<number | null>(null);
+  const [ebayListings, setEbayListings] = useState<EbayListingLite[]>([]);
+  const [draftTitle, setDraftTitle] = useState<string | null>(null);
+  const [pickId, setPickId] = useState("");
 
   useEffect(() => {
     fetch("/api/locations")
@@ -35,6 +79,27 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
         if (Array.isArray(data?.locations)) setLocations(data.locations);
       })
       .catch(() => {});
+    fetch("/api/listings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setEbayListings(data.filter((l: EbayListingLite) => l.status === "ACTIVE"));
+        }
+      })
+      .catch(() => {});
+    fetch("/api/drafts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          const mine = data.find(
+            (d: { bundle_id?: string | null; title?: string }) =>
+              d.bundle_id === initial.id && d.title,
+          );
+          if (mine) setDraftTitle(mine.title);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function boxName(locationId: string | null): string {
@@ -110,6 +175,48 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
     }
   }
 
+  async function fillFromEbay(ebayListingId?: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api(`/api/bundles/${bundle.id}/ebay-fill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ebayListingId ? { ebayListingId } : {}),
+      });
+      setBundle(updated);
+      setListingPanel(null);
+      flash(
+        updated?._synced
+          ? "Filled Actual Listing Price & Shipping Fee from eBay"
+          : "Filled from last sync — eBay was unreachable",
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't fill from eBay");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unlinkListing() {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = await api(`/api/bundles/${bundle.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: bundle.status, ebayListingId: null }),
+      });
+      setBundle(updated);
+      setPickId("");
+      flash("Unlinked — saved prices kept");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Couldn't unlink");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function loadDraft() {
     setBusy(true);
     setError(null);
@@ -165,6 +272,17 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
   const lines = bundle.items ?? [];
   const count = lines.reduce((n, bi) => n + bi.quantity, 0);
   const hasDraft = draft !== null;
+  const suggestedId = draftTitle ? suggestListing(draftTitle, ebayListings) : null;
+  const selectedId = pickId || bundle.ebay_listing_id || suggestedId || "";
+  const isLinked = Boolean(bundle.ebay_listing_id);
+  const linkedRow = isLinked
+    ? ebayListings.find((l) => l.ebay_listing_id === bundle.ebay_listing_id) ?? null
+    : null;
+  const showPriceLine =
+    bundle.listing_price_cents != null ||
+    bundle.shipping_cents != null ||
+    bundle.status === "listed" ||
+    bundle.status === "sold";
 
   return (
     <div className="space-y-4">
@@ -254,7 +372,7 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
           </div>
         </div>
       )}
-      {(bundle.listing_price_cents != null || bundle.shipping_cents != null) && !listingPanel && (
+      {showPriceLine && !listingPanel && (
         <p className="flex flex-wrap items-center gap-x-2 text-sm">
           <span className="font-semibold text-indigo-700">
             Actual Listing Price{" "}
@@ -272,6 +390,83 @@ export function BundleDetailClient({ initial }: { initial: BundleWithItems }) {
           </button>
         </p>
       )}
+
+      {/* eBay listing link + auto-fill from synced listings */}
+      <div className="card space-y-2">
+        <p className="text-sm font-bold">eBay listing</p>
+        {ebayListings.length === 0 ? (
+          <p className="text-xs text-slate-400">
+            No active eBay listings synced yet — run “Sync now from eBay” on the Listings tab, then
+            reload.
+          </p>
+        ) : (
+          <>
+            <select
+              className="input"
+              value={selectedId}
+              onChange={(e) => setPickId(e.target.value)}
+              disabled={busy}
+            >
+              <option value="">— no listing linked —</option>
+              {ebayListings.map((l) => (
+                <option key={l.ebay_listing_id} value={l.ebay_listing_id}>
+                  {truncated(l.title, 60)} ·{" "}
+                  {l.price_cents != null ? centsToUsd(l.price_cents) : "?"}
+                  {!isLinked && l.ebay_listing_id === suggestedId ? " (suggested)" : ""}
+                </option>
+              ))}
+            </select>
+            {!isLinked && suggestedId && selectedId === suggestedId && (
+              <p className="text-xs text-indigo-600">
+                Preselected from this bundle&apos;s listing draft title — confirm to link it.
+              </p>
+            )}
+            {linkedRow && (
+              <p className="text-xs text-slate-400">
+                Linked {linkedRow.price_cents != null ? centsToUsd(linkedRow.price_cents) : "—"}
+                {linkedRow.shipping_cents != null
+                  ? ` + ${centsToUsd(linkedRow.shipping_cents)} shipping`
+                  : ""}
+                {" · synced "}
+                {linkedRow.last_synced_at ? formatDateTime(linkedRow.last_synced_at) : "—"}
+                {linkedRow.item_uri && (
+                  <>
+                    {" · "}
+                    <a
+                      href={linkedRow.item_uri}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-indigo-600 hover:underline"
+                    >
+                      open on eBay
+                    </a>
+                  </>
+                )}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+              <button
+                className="btn btn-primary"
+                disabled={busy || !selectedId}
+                onClick={() => fillFromEbay(selectedId)}
+              >
+                {isLinked && selectedId === bundle.ebay_listing_id
+                  ? "Refresh from eBay"
+                  : "Link & fill price & shipping"}
+              </button>
+              {isLinked && (
+                <button className="btn btn-ghost text-slate-500" onClick={unlinkListing} disabled={busy}>
+                  Unlink
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-400">
+              Fills Actual Listing Price + Shipping Fee from that listing — it syncs eBay first so the
+              numbers are current. Manual edits afterwards still win until the next refresh.
+            </p>
+          </>
+        )}
+      </div>
 
       {/* Draft editor */}
       {draft && (

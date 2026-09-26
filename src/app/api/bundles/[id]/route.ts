@@ -86,7 +86,11 @@ export async function PATCH(request: Request, { params }: Params) {
   if (error || !bundle) return apiError("Bundle not found", 404);
 
   const update: Record<string, unknown> = { status };
-  if (body?.ebayListingId) update.ebay_listing_id = String(body.ebayListingId);
+  if (body && "ebayListingId" in body) {
+    // string links, null/"" unlinks.
+    const raw = body.ebayListingId;
+    update.ebay_listing_id = raw == null || raw === "" ? null : String(raw);
+  }
 
   // Actual Listing Price / Shipping Fee (captured when marking listed, editable after).
   const centsFields: Array<[key: string, column: string]> = [
