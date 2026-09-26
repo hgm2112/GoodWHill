@@ -391,8 +391,20 @@ Copy `.env.local.example` → `.env.local`. Keys:
   (shared ≥ 2 meaningful words and ≥ 30% overlap, generic lot words
   dropped) — auto-suggest + confirm, never auto-applied. `PATCH
   /api/bundles/[id]` accepts `ebayListingId: null` to unlink (prices kept).
-- `src/lib/bundle.ts` also exports `defaultBundleName`, `generateListingText`,
-  and `bundleToCsv` ("Contents value" + "Bundle price (10% off)" rows).
+- **Display names** (`ebayTitlesForBundles(supabase, ownerId, ids)` in
+  `bundle.ts`): wherever a bundle is named live — bundles tab, detail h1,
+  dashboard "Reserved in bundles", sale-form dropdown (`display_name`
+  option field) — the linked eBay listing's `listings.title` wins (DB
+  `bundles.name` untouched; unlinked bundles keep their generated name;
+  sale-history rows still show `bundle.name`). The bundles tab shows the
+  status word after `created {date}` (no status dot).
+- **Listing draft text** (`generateListingText`): title + one `• N× Name`
+  bullet per line sorted unit-value desc (line-total tie-break),
+  price-free by design. The draft editor never auto-regenerates — an
+  explicit **Regenerate** button (with confirm) rewrites the local draft;
+  only **Save draft** persists it.
+- `src/lib/bundle.ts` also exports `defaultBundleName` and `bundleToCsv`
+  ("Contents value" + "Bundle price (10% off)" rows).
 
 ## Working set / next steps
 

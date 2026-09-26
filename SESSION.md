@@ -7,107 +7,53 @@ this file records where the previous session left off.
 
 ## Current Objective
 
-**eBay auto-fill for Actual Listing Price + Shipping Fee** (committed
-`6ca69d9`, pushed, typecheck/lint green; **migration `0012` applied** by the
-user, REST-verified): user request — pull those two fields from their own
-synced eBay listings instead of typing them. Decisions (user-confirmed):
+**No feature in flight** — everything requested this session is shipped and
+pushed (details under "What We Did (this session)" + "Files Changed" below).
+Session arc after the eBay auto-fill: bundle display names → draft editor
+fixes → build-around-item bundles → release dates for Pokémon + Topps
+(filled) → hover-enlarge removed from artwork thumbs. Next work = the
+browser verifications in Problems / Blockers and a production build once the
+dev server is stopped.
 
-- Matching = **auto-suggest + confirm**: the unlinked dropdown preselects the
-  `(suggested)` listing scored from the bundle's listing-draft title (shared
-  ≥ 2 meaningful words AND ≥ 30% of the draft's tokens; generic lot words
-  like lot/sealed/mtg/misc/x dropped). Never auto-applied — user confirms.
-- Fill = **sync first, then fill**: `syncEbaysListings` runs on every fill;
-  if eBay errors it falls back to the last-synced row and the response says
-  `_synced: false` (toast notes it).
+Highlights for whoever picks this up:
 
-Shipped this session (committed `6ca69d9`):
+- **Release dates ARE FILLED** — the user ran "Fill release dates" through
+  the real route; probe `npx tsx scripts/probe-release-dates.ts --inventory`
+  → **65/70** (was 59/70). Pokémon sets resolve via the official press
+  schedule (`fetchPokemonSchedule`, shared with the dashboard); the three
+  Topps Chrome barcodes (= *2025 Topps Chrome Football*, released
+  2026-04-15 — identity from eBay GTIN listing titles, date from
+  ripped.topps.com) via a one-off seed of `upc_catalog.release_date`
+  (user's pick over brittle Topps calendar scraping). `upc_catalog` is now
+  checked BEFORE any network source. Still manual (by design): Yu-Gi-Oh,
+  Festival in a Box, 3 genuinely ambiguous Secret Lairs.
+- **Build around an item** — `POST /api/bundles/generate` takes
+  `anchorItemId` + the existing `dominant` flag (true = anchor mode: line 1
+  + fillers ≤50%; false = include mode: guaranteed in a normal mix). The
+  anchor bypasses the 60% single-unit rule and pins the bundle to its own
+  game; the builder's picker swaps the dominant checkbox for two radios.
+- **eBay auto-fill browser-tested** (both bundles linked to their listings);
+  bundles now show the linked eBay listing title as their name everywhere
+  live; drafts show `•` bullet contents + an explicit Regenerate; artwork
+  thumbs enlarge on **click only** (hover popover removed at the user's
+  request — "hovering causes too much issues").
 
-1. **`listings.shipping_cents`** (`supabase/migrations/0012_listings_shipping.sql`,
-   idempotent, **applied by the user 2026-09-26 — REST-verified**, all rows
-   still null until the next sync):
-   `parseTradingItem` now extracts the first `ShippingServiceCost` from the
-   GetMyeBaySelling ActiveList XML into the sync payload. Probe
-   `scripts/probe-trading-shipping.ts` (read-only, reads `.env.local`, AES-GCM
-   token decrypt + refresh-grant fallback) confirmed **branch A: 12/13 items
-   carry it** (sample $5.99) → no per-item GetItem needed. The column must be
-   applied BEFORE deploy/sync everywhere (payload always includes the key →
-   PGRST204 sync failures without it).
-2. **`POST /api/bundles/[id]/ebay-fill`** (`src/app/api/bundles/[id]/ebay-fill/`):
-   body `{ ebayListingId? }` (omitted = refresh the current link) → syncs
-   (best-effort try/catch) → reads the linked `listings` row (409
-   `LISTING_NOT_FOUND` if absent/not active, 409 `NO_PRICE` if unpriced) →
-   writes `listing_price_cents = price_cents` and `shipping_cents` only when
-   the listing carries one (null = keep stored — manual edits win) → returns
-   the updated bundle + `_synced` + listing title/URI. **Status never
-   changes.** Route smoke-tested via dev server: 401 JSON as expected.
-3. **"eBay listing" card** (`BundleDetailClient.tsx`): loads `/api/listings`
-   (client-filters `status === "ACTIVE"`) + `/api/drafts` (this bundle's
-   title for the suggestion). Unlinked = select preselected with
-   `(suggested)` + hint line + **Link & fill price & shipping** (disabled
-   with no selection). Linked = price + shipping + synced-time line + "open
-   on eBay" link, **Refresh from eBay** (re-fill, triggers sync), **Unlink**.
-   `PATCH /api/bundles/[id]` accepts `ebayListingId: null` to unlink
-   (prices kept; empty string also clears).
-4. **Diagnosed + fixed a UI gap**: the Actual Listing Price info line only
-   rendered when a value was set, so a `listed`/`sold` bundle with null
-   values had no Edit affordance. It now renders (dashes + Edit) whenever a
-   value is set **or** status is listed/sold.
-
-Already pushed this session: **Actual Listing Price / Shipping Fee manual
-fields** (commit `e7aa06d` — panel on mark-listed, Edit button, list display,
-sale-form prefill; migration `0011` **applied**, REST-verified) and the
-**bundle preview == created** fix (`4f376b5` + docs `e533545`).
-
-**Product release date** (committed `524e903`, pushed; probe-verified
-**59/70 resolvable**, **dates NOT yet filled in the DB**): `items.release_date` — when the
-PRODUCT came out, distinct from `acquired_at`. Migration
-`supabase/migrations/0010_item_release_date.sql` (adds `items.release_date` +
-shared `upc_catalog.release_date`) **is already applied** — verified via REST
-(column returns, all null). Display: editable in the item form, `Released Jun
-13, 2025` on inventory cards / scan catalog card / matched rows (`formatDate`,
-omitted when blank). Autofill fills BLANKS ONLY.
-
-**Why nothing was filling (diagnosed + fixed this session):** the resolver
-had only two sources — loose-card Scryfall date (0 loose items exist) and
-`set_code` (0 of 70 items have one) — so every lookup returned null. Also
-confirmed live: eBay can NEVER be a source (Browse search returns no
-`localizedAspects` at all; TCG listing details only have year-only
-"Year Manufactured"). The fix (implemented):
-
-1. **`findSetForProduct`** (`scryfall.ts`) — product name → Scryfall set
-   match (6h `/sets` cache): before-`:` product line minus retail words;
-   exact-normalized → set-name-contains → token-subset tiers;
-   token/promo/memorabilia/alchemy sets filtered; unique main-set candidate
-   or blank; `Secret Lair*` hard-excluded (their `sld` date is 2019).
-   Prototype caught three wrong-match traps that are now guarded: CLB→1994
-   Legends, Commander Masters→Masters 25, SL drops→`sld 2019`.
-2. **`lookupSecretLairDate`** (`secret-lair.ts`) — mtg.wiki membership-
-   verified: drop name searched as phrase with `intitle:"Secret Lair"`,
-   title gated to `Superdrop|Drop Series|Commander Deck` (`Secret Lair/…`
-   hub subpages like the "Drop Series" index — which carries an unrelated
-   2025-10-29 date and poisoned early runs — excluded), phrase must appear
-   verbatim in the page wikitext, and **all owning pages must agree on
-   exactly one date** (else blank: e.g. "Command Tower" is reprinted across
-   7 superdrops → correctly left blank). 6h wikitext/phrase caches (negatives
-   cached too) keep a 50-item bulk fill ~10-20s.
-3. **`resolveReleaseDate`/`resolveReleaseDateDetailed`** live in
-   `src/lib/release-dates.ts` (shared by route + probe): loose card →
-   set_code → SL-wiki or set match.
-4. **Probe**: `npx tsx scripts/probe-release-dates.ts --inventory` runs the
-   production resolver over every item and prints each pick + source.
-   **Result: 59/70** (set_name=34, secret_lair=25); 11 manual = Pokémon×3,
-   Topps×3, Yu-Gi-Oh, Festival in a Box, plus 3 genuinely ambiguous Secret
-   Lairs (Lasagna Food Token, Command Tower, Inked Foil Edition). Every pick
-   eyeballed: set dates all correct; SL pages spot-checked verbatim in page
-   context (e.g. "Back in my day!" confirmed inside the Two Scoops superdrop
-   table).
+Earlier same-session work (still current): **eBay auto-fill** for Actual
+Listing Price + Shipping Fee (committed `6ca69d9`, migration `0012`
+applied, browser-tested — suggestion scoring = draft-title share ≥ 2
+meaningful words AND ≥ 30% overlap, sync-first fill with `_synced: false`
+fallback, status never touched); **Actual Listing Price / Shipping Fee
+manual fields** (`e7aa06d`, migration `0011` applied); **bundle
+preview == created** (`4f376b5`); **product release date** plumbing
+(`524e903` — form/card/scan display, blank-only autofill, `findSetForProduct`
++ membership-verified Secret Lair lookup).
 
 ## What We Did (this session)
 
-1. **eBay auto-fill for Actual Listing Price / Shipping Fee** (Current
-   Objective — committed `6ca69d9`, pushed; file list in its own section
-   below): shipping parse in the listings sync (probe-verified branch A),
-   migration `0012` **applied by the user**, `POST /api/bundles/[id]/ebay-fill`,
+1. **eBay auto-fill for Actual Listing Price / Shipping Fee** (committed
+   `6ca69d9`, pushed; file list in its own section below): shipping parse in
+   the listings sync (probe-verified branch A), migration `0012`
+   **applied by the user**, `POST /api/bundles/[id]/ebay-fill`,
    the bundle-detail "eBay listing" card with draft-title suggestion, PATCH
    unlink (`ebayListingId: null`), info-line listed/sold gap fix.
 2. **Actual Listing Price + Shipping Fee** (committed `e7aa06d`, pushed):
@@ -139,6 +85,53 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
    Current Objective).
 5. **Inventory visibility: paused always shown, sold-out hidden** (committed
    `26e3c0c` + SESSION refresh `4b92db4`, pushed — see Files Changed below).
+6. **Bundle display names + status layout** (committed `66fd101`, pushed):
+   status dot removed — the status word now sits after `created {date}` in
+   the subline; everywhere a bundle is named live (bundles tab, detail h1,
+   dashboard "Reserved in bundles", sale-form dropdown via new
+   `display_name` option field) shows the linked eBay listing's title via
+   the new `ebayTitlesForBundles(supabase, ownerId, ids)` helper in
+   `bundle.ts` (DB `bundles.name` untouched; unlinked bundles keep their
+   generated name); `listingLabel` dropped the redundant "listed" token
+   (kept `ship $Y`); sale-history rows still show `bundle.name`.
+7. **Listing-draft fixes** (committed `e3ee03e`, pushed): the draft editor's
+   mount fetch of `/api/drafts` now also `setDraft({title, description})` so
+   the button reads "Edit listing draft" on revisit; `generateListingText`
+   emits `• N× Name (SET)` bullets sorted by unit value desc (line-total
+   tie-break) instead of numbered lines; new **Regenerate** button in the
+   draft editor (confirm → regenerate from `bundle.items` → persists only on
+   Save draft — drafts are never auto-regenerated).
+8. **Build around an item** (committed `c03a8c5`, pushed; AGENTS.md updated
+   in the same commit): generate route takes `anchorItemId` — the anchor is
+   always included, bypasses the 60%-of-target single-unit rule, and pins
+   the bundle to its own game group (409 `ANCHOR_NOT_ELIGIBLE` /
+   `ANCHOR_GAME_MISMATCH`); `dominant` picks **anchor mode** (anchor line 1,
+   fillers ≤50% of its value) vs **include mode** (guaranteed in a plain
+   mix); builder's "Build around item" picker (live-filtered to current
+   Include kinds + game choice, auto-clears when filters exclude it) swaps
+   the dominant checkbox for two radios; `POST /api/bundles` untouched (the
+   create route never takes `anchorItemId` — the builder always persists
+   previewed lines). Probe extended with 3 anchor scenarios — all green.
+9. **Release dates: Pokémon + Topps Chrome** (committed `154f8b0`, pushed;
+   AGENTS.md updated in the same commit): `releases.ts` now exports
+   `fetchPokemonSchedule()` (full `period=All` table incl. past, own 6h
+   cache, never caches an empty parse — dashboard `fetchPokemonReleases`
+   still drops `date < today`); resolver gains `upc` → `upc_catalog.release_date`
+   (plain REST fetch, NOT `createAdminClient` — realtime throws under
+   Node 20/tsx) checked BEFORE the network sources, plus a `pokemon_schedule`
+   branch (`/^pok[eé]mon/i` early-return before Scryfall; item tokens minus
+   product words must ALL match and all matches must agree on ONE date). The
+   three Topps Chrome barcodes (887521156788/832/870 = *2025 Topps Chrome
+   Football* via eBay GTIN titles; date 2026-04-15 from ripped.topps.com)
+   were seeded once into `upc_catalog.release_date`. **All 6 dates now in the
+   DB** — the user ran "Fill release dates" through the real route; probe
+   **65/70** (was 59/70). Remaining 5 manual by design: Yu-Gi-Oh, Festival
+   in a Box, 3 genuinely ambiguous Secret Lairs.
+10. **Hover-enlarge removed from artwork thumbs** (committed `7f6c738`,
+    pushed): user — "hovering causes too much issues" — `canHover`/`hovering`/
+    popover deleted from `ArtworkThumb.tsx` (used by inventory + bundle
+    builder); click/tap still opens the lightbox; `s-l<N>` → `s-l1600`
+    upscale unchanged.
 
 ## What We Did (2026-09-24 sessions)
 
@@ -260,41 +253,39 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
 
 ## Current State
 
-- `origin/main` = `6ca69d9` (eBay auto-fill, pushed; before that `e7aa06d`
-  listing-price fields, `4f376b5` preview fix + `e533545` docs). Working
-  tree **clean**.
-- `typecheck` + `lint` pass (re-run after the auto-fill feature landed;
-  also fixed 3 errors in `scripts/probe-trading-shipping.ts`).
+- `origin/main` = `7f6c738` (hover removal; before it `154f8b0` release
+  dates, `c03a8c5` build-around-item, `e3ee03e` draft fixes, `66fd101`
+  bundle names — all pushed). Working tree **clean**.
+- `typecheck` + `lint` pass (re-run green after every commit this session).
   **`npm run build` not run** — the dev server IS running (pgrep confirmed);
   building would clobber `.next/` and 500 every dynamic route. Route
-  smoke-tested through it: `POST /api/bundles/[id]/ebay-fill` → 401 JSON.
-- **Migration `0012` IS applied** (`0012_listings_shipping.sql` —
-  `listings.shipping_cents`; REST-verified 2026-09-26; rows null until the
-  first sync writes them — the auto-fill's sync-back fills them).
-- **Migration `0011` IS applied** (REST-verified: both `bundles` columns
-  return; both bundles currently null). **Migration `0010` IS applied** (verified via REST this session: the
-  column returns, all rows null). **Dates are NOT filled yet** — the user
-  clicks "Fill release dates (N)" once the feature is browser-ready; expect
-  59/70 to fill in one or two clicks (cap 50 per call), 11 stay manual.
-- **Probe verified**: `npx tsx scripts/probe-release-dates.ts --inventory` →
-  **59/70 resolvable** (set_name=34, secret_lair=25), every pick + source
-  printed and reviewed; SL page matches spot-checked verbatim in wikitext
-  context. eBay probing proved Browse carries no usable release dates (see
-  Current Objective).
+  smoke-tested through it earlier: `POST /api/bundles/[id]/ebay-fill` → 401 JSON.
+- **Migrations `0001`–`0012` all applied** (0011 + 0012 REST-verified
+  2026-09-26; 0010 earlier; 0009 on 2026-09-24). Next new migration =
+  `0013_*.sql`.
+- **Release dates ARE filled in the DB**: the user ran "Fill release dates"
+  through the real route; `npx tsx scripts/probe-release-dates.ts --inventory`
+  → **65/70** (new `upc_catalog` + `pokemon_schedule` sources; catalog now
+  short-circuits prior discoveries). Every pick + source printed and
+  reviewed. 5 manual by design: Yu-Gi-Oh, Festival in a Box, the 3 ambiguous
+  Secret Lairs (Lasagna Food Token, Command Tower, Inked Foil Edition).
+  Pokémon barcodes cached onto `upc_catalog` by the fill.
+- **eBay auto-fill browser-tested** (user linked both bundles:
+  128098813682 / 128098820562). Release-date *display* (card "Released"
+  lines, scan rows) not yet eyeballed after the fill — values are in the DB.
 - **Probe verified** dominant-anchor: `npx tsx scripts/probe-bundle-dupes.ts`
-  → BOTH modes, dup rate 56–71%, dominant 100% anchor-first / 100%
-  filler-tier, 0 violations at fill targets $55.56/$111.11/$166.67.
-- **Migration `0009` applied** (SQL editor by the user, 2026-09-24). The
-  price-history feature has not been browser-verified yet.
-- **eBay auto-fill NOT browser-checked yet** (and migration `0012`
-  unapplied — see above). **Actual Listing Price / Shipping Fee manual flow
-  NOT browser-checked yet** (migration applied, committed `e7aa06d`).
-  **Bundle preview==create NOT
-  browser-confirmed yet** (generate → create → Bundles detail must show the
-  identical lines/value/price). Bundle discount
-  + duplicates + dominant toggle NOT browser-checked yet. No
-  browser check of price history either. Inventory visibility (paused shown,
-  sold-out hidden) also not browser-checked yet.
+  → BOTH modes + the 3 new anchor scenarios (presence / first-line+tier /
+  include mode / 60% bypass with an oversized anchor), dup rate 56–71%,
+  0 violations. Releases calendar still parses after the `fetchPokemonSchedule`
+  refactor (`npx tsx scripts/probe-releases.ts`).
+- Still NOT browser-checked: **Actual Listing Price / Shipping Fee manual
+  flow** (migration applied, committed `e7aa06d`); **Bundle preview==create**
+  (generate → create → Bundles detail must show the identical
+  lines/value/price); bundle discount + duplicates + dominant toggle; price
+  history; inventory visibility (paused shown, sold-out hidden); and the
+  four newest commits (`66fd101` bundle names/status, `e3ee03e` draft
+  bullets/Regenerate, `c03a8c5` build-around-item, `7f6c738` click-only
+  artwork).
 - Data (REST-verified this session): **70 items · 248 units** — 69 sealed +
   1 open ("Tarkir Dragonstorm: Temur Roar Commander Deck", now kind `open`
   with price $98.66 + picture ✓; the old "kind other, no art" note is dead).
@@ -309,8 +300,32 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   last-synced row (`_synced: false`) over failing hard when eBay is down.
   Shipping unknown on a listing (null) = keep the stored value (manual
   entries win); present (incl. 0) = overwrite. Status is never touched by
-  the fill. `listings.shipping_cents` parsed during sync (branch A,
-  probe-verified 12/13) rather than a per-item GetItem call.
+   the fill. `listings.shipping_cents` parsed during sync (branch A,
+   probe-verified 12/13) rather than a per-item GetItem call.
+
+- **Release-date sources round 2 (2026-09-26, user-picked scope)**: Pokémon
+  fully automatic via the official press schedule (chosen over one-off
+  fills); Topps = seed `upc_catalog` once (chosen over brittle multi-hop
+  calendar scraping: GTIN → eBay title → ripped.topps.com). Resolver checks
+  the catalog BEFORE any network source; `pokemon_schedule` must match ALL
+  item tokens and agree on ONE date else blank (blank-not-guess retained).
+- **Build around an item (2026-09-26, user-confirmed)**: one toggle doing
+  double duty — `anchorItemId` + `dominant:true` = **anchor mode** (bundle
+  led by the picked item, fillers ≤ half its value), `dominant:false` =
+  **include mode** (plain mix with the item guaranteed in). The anchor
+  bypasses the 60% single-unit rule (user: "Bypass the 60% rule") and pins
+  the bundle to its own game group. Generate route only — `POST /api/bundles`
+  never takes it (the builder always persists previewed lines).
+- **Bundle display names (2026-09-26)**: everywhere live shows the linked
+  eBay listing's title (`ebayTitlesForBundles`); DB `bundles.name` and
+  sale-history rows keep the generated name — a one-off display layer, not
+  a rename. Status dot dropped; status word moved after `created {date}`.
+- **Draft contents (2026-09-26)**: `•` bullets sorted unit-value desc
+  (line-total tie-break); drafts never auto-regenerate — explicit
+  **Regenerate** button with confirm, persisted only via Save draft.
+- **Artwork enlarge on click only (2026-09-26, user)**: hover popover
+  removed ("hovering causes too much issues"); lightbox + `s-l1600`
+  upscale stay.
 
 - **Release-date sources (2026-09-25)**: eBay is NOT one — live probing
   proved Browse summaries return no `localizedAspects` (0/10, with/without
@@ -342,6 +357,65 @@ confirmed live: eBay can NEVER be a source (Browse search returns no
   omits the field entirely gets today.
 - **Canvas/stepper/min widths**: use Tailwind classes in `globals.css`;
   review built classes before editing.
+
+## Files Changed (2026-09-26 later commits: `66fd101` / `e3ee03e` / `c03a8c5` / `154f8b0` / `7f6c738`)
+
+- **`66fd101`** bundle names/status (6 files, +69/−21):
+  - `src/lib/bundle.ts` — `ebayTitlesForBundles(supabase, ownerId, ids)`
+    (type-only supabase import) → map of `ebay_listing_id` →
+    `listings.title`.
+  - `src/app/(app)/bundles/page.tsx` — status dot removed, status word
+    after `created {date}`, visible name = linked title (truncated 60);
+    `listingLabel` loses the redundant "listed" token (keeps `ship $Y`).
+  - `src/app/(app)/bundles/[id]/page.tsx` — detail h1 = linked title.
+  - `src/app/(app)/page.tsx` — dashboard "Reserved in bundles" names.
+  - `src/app/(app)/sales/page.tsx` + `src/components/SalesClient.tsx` —
+    sale-form dropdown options carry `display_name` (linked title).
+- **`e3ee03e`** draft fixes (2 files, +42/−6):
+  - `src/components/BundleDetailClient.tsx` — mount `/api/drafts` also
+    `setDraft({title, description})` (correct "Edit listing draft" label on
+    revisit); **Regenerate** button in the draft editor (confirm →
+    `generateListingText(bundle.items)` → local state; Save draft persists).
+  - `src/lib/bundle.ts` — `generateListingText` emits `•` bullets sorted
+    unit-value desc.
+- **`c03a8c5`** build around an item (5 files, +320/−35):
+  - `src/lib/bundle.ts` — `BundleGenOptions.anchorItemId`; 60% filter
+    exempts the anchor; empty result when the id is absent from `items`;
+    `dominantBundle(..., fixedAnchorIndex)`; `mixBundle(..., anchorIndex)`
+    seeded into the trial + fallback; `buildBundleAcrossGames` resolves the
+    anchor first and pins its game group.
+  - `src/app/api/bundles/generate/route.ts` — `anchorItemId` validation
+    (eligibility query → 409 `ANCHOR_NOT_ELIGIBLE`; explicit `game`
+    contradiction → 409 `ANCHOR_GAME_MISMATCH`; unknown id → 409), passes
+    `dominant` + `anchorItemId` through, JSDoc.
+  - `src/components/BundleBuilder.tsx` — `allItems`/`anchorId`/`anchorMode`
+    state, live-filtered "Build around item" picker (auto-clears when
+    filters exclude it), Anchor-it/Just-include radios swap the dominant
+    checkbox when a picker item is chosen, generate body.
+  - `scripts/probe-bundle-dupes.ts` — `runAnchor` scenarios (anchor
+    presence + first-line/tier in anchor mode, include-mode presence, 60%
+    bypass with an oversized anchor).
+  - `AGENTS.md` — anchor bullet + generate-route contract.
+- **`154f8b0`** release dates Pokémon/Topps (4 files, +192/−31):
+  - `src/lib/releases.ts` — `PokemonScheduleRow` + exported
+    `fetchPokemonSchedule()` (full `period=All` table incl. past, own 6h
+    cache, never caches an empty parse); `fetchPokemonReleases` consumes it
+    and still drops `date < today`.
+  - `src/lib/release-dates.ts` — `ReleaseDateItem { upc? }`; sources
+    `upc_catalog` | `pokemon_schedule`; `lookupCatalogDate` (plain REST —
+    `createAdminClient` throws under Node 20/tsx — caches only non-null);
+    `pokemonTokens`/`lookupPokemonScheduleDate` (all tokens + one date,
+    early-return before Scryfall); resolver order: loose→card, set_code→set,
+    upc→catalog, sealed/open: SL wiki / Pokémon schedule / set name.
+  - `scripts/probe-release-dates.ts` — selects `upc`, labels the two new
+    sources.
+  - `AGENTS.md` — resolver + releases-calendars bullets updated.
+  - Data (not files): `upc_catalog` 3 Topps UPCs seeded `2026-04-15`; all 6
+    item dates filled via the refresh-price route by the user.
+- **`7f6c738`** hover removal (1 file, +5/−29):
+  - `src/components/ArtworkThumb.tsx` — `canHover`/`hovering`/popover
+    deleted; click/tap lightbox + `enlargeImageUrl` kept.
+- `SESSION.md` — this file.
 
 ## Files Changed (committed `6ca69d9` = eBay auto-fill)
 
@@ -540,23 +614,26 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 - Marketplace Insights still 403 → auto fallback to `browse_active`.
 - Script env pattern (Node 20): `supabase-js createClient` fails (no native
   WebSocket) — use raw REST headers `apikey`/`Authorization` and parse
-  `.env.local` manually (see `scripts/backfill-variant-art.ts`).
+  `.env.local` manually (see `scripts/backfill-variant-art.ts`;
+  `release-dates.ts`'s catalog lookup follows it on purpose so probes and
+  the Next.js route can share the resolver).
 - Route probes for sanity: dynamic `[id]` routes must return 401/405 JSON,
   never bare 500.
 
 ## Problems / Blockers
 
-1. **eBay auto-fill not browser-verified yet** — committed `6ca69d9`,
-   migration `0012` applied (REST-verified; rows still null until the first
-   sync writes them). Checklist: reload the bundle detail → the "eBay
-   listing" card should preselect the `(suggested)` listing (MTG bundle →
-   "…Lorwyn Eclipsed: Bundle and Misc Boosters" $105; MTG2 → "…Secret Lair,
-   Deck, and 4x Boosters" $125) → **Link & fill price & shipping** (a few
-   seconds — syncs eBay live; buttons disable) → info line shows the filled
-   price + shipping (first fill backfills `shipping_cents` on the other synced
-   listings too), status still `listed` → **Refresh from eBay** re-syncs;
-   **Unlink** keeps the prices. Bundles list shows actual price + `ship $Y`;
-   sale form prefills Gross/Shipping from the filled bundle.
+1. **Four newest commits not browser-verified** — `66fd101` (bundle
+   names/status), `e3ee03e` (draft bullets/Regenerate), `c03a8c5`
+   (build-around-item), `7f6c738` (click-only thumbs); typecheck/lint green.
+   Checklist: bundles tab shows linked eBay titles as names (status word
+   after `created {date}`, no dot), detail h1 / dashboard "Reserved in
+   bundles" / sale-form dropdown likewise, unlinked bundles keep their
+   generated name; builder → **Build around item** → *Anchor it* gives a
+   bundle led by the picked item (line 1, fillers ≤ half its value, same
+   game) — *Just include it* keeps it in every bundle; draft editor opens
+   with "Edit listing draft", shows `•` bullets in unit-value-desc order,
+   **Regenerate** re-rolls and only **Save draft** persists; artwork thumb
+   hover → nothing, click/tap → lightbox.
 2. **Actual Listing Price / Shipping Fee manual flow not browser-verified**
    — committed `e7aa06d`, migration `0011` applied: bundle detail →
    "Mark listed" → panel with **Actual Listing Price** prefilled at the
@@ -570,13 +647,12 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
    be identical to the preview; "Regenerate" must still re-randomize; a stale
    preview (item paused/sold out since) should show the inline "Inventory
    changed since this preview — regenerate the bundle." error.
-4. **Release date not filled/browser-verified yet** — migration `0010` is
-   applied (REST-verified) and the probe resolves **59/70**, but no dates
-   are written to the DB yet: have the user click "Fill release dates (N)"
-   (2 clicks: cap 50), then check the card "Released" lines, scan displays,
-   and the form field. 11 rows stay manual by design: Pokémon×3, Topps×3,
-   Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna Food
-   Token, Command Tower, Inked Foil Edition).
+4. **Release dates filled — display not eyeballed** — the fill ran through
+   the real route (probe **65/70**; values + Pokémon UPC cache in the DB).
+   Remaining: load the inventory card "Released …" lines, scan-page catalog
+   card + matched rows, and the item form field. 5 rows stay manual by
+   design: Yu-Gi-Oh, Festival in a Box, and 3 ambiguous Secret Lairs (Lasagna
+   Food Token, Command Tower, Inked Foil Edition).
 5. **Bundle discount + duplicates + dominant toggle not browser-exercised
    yet** — discount: generate a $100 preset → contents ≈ $111, price $100;
    create → detail/list show price · value; CSV has both rows; an old bundle
@@ -607,17 +683,17 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 
 ## Next Steps (priority order)
 
-1. Browser-verify the eBay auto-fill flow (Problem 1; migration `0012`
-   applied, feature committed `6ca69d9`) — nothing else needed before the
-   test.
+1. Browser-verify the four newest commits (Problem 1): bundle names/status,
+   draft bullets/Regenerate, build-around-item (anchor + include modes),
+   click-only artwork.
 2. Browser-verify the Actual Listing Price manual flow (Problem 2; migration
    `0011` already applied).
 3. Browser-verify the bundle preview fix (Problem 3).
-4. Have the user click "Fill release dates (N)" and browser-verify the
-   release-date feature (Problem 4; probe says expect 59/70).
+4. Eyeball the release-date display now that dates are filled (Problem 4;
+   probe says 65/70, 5 manual by design).
 5. Browser-verify the inventory visibility rules (Problem 6), the bundle
    discount + duplicates + dominant toggle, and the price history sparkline
-   (Problems 5 + 7).
+   (Problems 5 + 7), and load the dashboard releases card (Problem 8).
 6. Fix the `quantity` PATCH gap (Problem 9; route `[id]` ignores `quantity` —
    decide whether form quantity edits should reuse `adjust` semantics +
    movement ledger before coding).
@@ -632,8 +708,9 @@ discount, `24de6a9` bundle duplicates — see "What We Did" items 4–6.)
 - **Never run `npm run build` while `npm run dev` is running** — clobbers
   `.next/`, breaks every dynamic `[id]` API route with a bare 500.
 - Don't rewrite migrations `0001`–`0012`; add the next `0013_*.sql` (keep idempotent).
-- Don't touch `ArtworkThumb`'s enlarged views (hover popover, modal lightbox,
-  `s-l<N>` → `s-l1600`) or show `category` on cards — user said leave them.
+- Don't touch `ArtworkThumb`'s lightbox or `s-l<N>` → `s-l1600` upscale,
+  and don't re-add a hover preview (deliberately removed 2026-09-26 — user:
+  "hovering causes too much issues"). Don't show `category` on cards.
 - Split card names on **last `:`** for the bold sub-name display.
 - No OCR/barcode guessing for single cards; only sealed UPCs are scanned.
 - Cents everywhere; `*_cents` suffixes. Pin package versions; no new deps
